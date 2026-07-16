@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crossborder-ai-analytics"
+version = "2.0.0"
+description = "Evidence-backed cross-border ecommerce analytics on AutoClean"
+requires-python = ">=3.10"
+dependencies = [
+  "autoclean>=6.4.0,<7",
+  "pandas>=2.0.0",
+  "numpy>=1.24.0",
+  "streamlit>=1.45.0,<2",
+  "streamlit-aggrid==1.2.1.post2",
+  "plotly>=5.24.0,<7",
+  "matplotlib>=3.5.0",
+  "openpyxl>=3.1.0",
+  "python-docx>=0.8.11",
+  "Pillow>=9.0.0",
+]
+
+[project.scripts]
+crossborder-analyze = "crossborder_analytics.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["crossborder_analytics*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
