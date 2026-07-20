@@ -15,6 +15,13 @@ ENDPOINTS = {
     "edge": "http://127.0.0.1:9223",
 }
 SCREENSHOTS = Path(__file__).resolve().parents[1] / ".cache" / "browser-debug" / "screenshots"
+CHART_VIEWS = ["经营总览", "销售分析", "商品分析", "客户分析", "区域市场", "退货与运营"]
+VIEWPORTS = [
+    {"width": 1440, "height": 1000},
+    {"width": 1280, "height": 800},
+    {"width": 1024, "height": 768},
+    {"width": 393, "height": 851},
+]
 
 
 def endpoint_ready(endpoint: str) -> bool:
@@ -52,6 +59,33 @@ def plotly_segment_counts(page) -> list[list[object]]:
               .sort((left, right) => left[0].localeCompare(right[0]));
         }"""
     )
+
+
+def plotly_boundary_violations(page) -> list[dict]:
+    return page.evaluate(
+        """() => Array.from(document.querySelectorAll('[data-testid="stPlotlyChart"]')).flatMap((chart, chartIndex) => {
+            const bounds = chart.getBoundingClientRect();
+            const selectors = ['.gtitle', '.xtitle', '.ytitle', '.legend', '.xtick text', '.ytick text', '.colorbar'];
+            return selectors.flatMap(selector => Array.from(chart.querySelectorAll(selector)).map(element => {
+                const box = element.getBoundingClientRect();
+                const visible = box.width > 0 && box.height > 0;
+                const outside = visible && (
+                    box.left < bounds.left - 4 || box.right > bounds.right + 4 ||
+                    box.top < bounds.top - 4 || box.bottom > bounds.bottom + 4
+                );
+                return outside ? {chartIndex, selector, text: element.textContent, box, bounds} : null;
+            }).filter(Boolean));
+        })"""
+    )
+
+
+def open_sidebar(page):
+    sidebar = page.locator('[data-testid="stSidebar"]')
+    expect(sidebar).to_be_attached(timeout=60_000)
+    if sidebar.get_attribute("aria-expanded") == "false":
+        page.locator('[data-testid="stExpandSidebarButton"]').click()
+        expect(sidebar).to_have_attribute("aria-expanded", "true")
+    return sidebar
 
 
 @pytest.mark.skipif(os.environ.get("BROWSER_E2E") != "1", reason="requires debug browsers")
@@ -172,3 +206,39 @@ def test_customer_detail_switching_keeps_chart_fixed_and_downloads_search(browse
         page.screenshot(path=str(mobile_path), full_page=True, timeout=60_000)
         assert_nonblank_screenshot(mobile_path)
         assert page.evaluate("document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1")
+
+
+@pytest.mark.skipif(os.environ.get("BROWSER_E2E") != "1", reason="requires debug browsers")
+@pytest.mark.parametrize("browser_name", ["chrome", "edge"])
+def test_all_dashboard_charts_fit_supported_viewports(browser_name):
+    endpoint = ENDPOINTS[browser_name]
+    if not endpoint_ready(endpoint):
+        pytest.skip(f"{browser_name} debug endpoint is not running")
+
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.connect_over_cdp(endpoint)
+        context = browser.contexts[0]
+        pages = context.pages
+        page = next((candidate for candidate in pages if candidate.url.startswith(APP_URL)), pages[0])
+        page.goto(APP_URL, wait_until="domcontentloaded")
+
+        for view in CHART_VIEWS:
+            page.set_viewport_size(VIEWPORTS[0])
+            sidebar = open_sidebar(page)
+            sidebar.locator("label").filter(has_text=view).click()
+            expect(page.get_by_role("heading", name=view, exact=True)).to_be_visible(timeout=30_000)
+            expect(page.locator('[data-testid="stPlotlyChart"]').first).to_be_visible(timeout=30_000)
+
+            for viewport in VIEWPORTS:
+                page.set_viewport_size(viewport)
+                page.wait_for_timeout(300)
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1"
+                ), (browser_name, view, viewport)
+                assert plotly_boundary_violations(page) == [], (browser_name, view, viewport)
+
+            if view in {"商品分析", "区域市场"}:
+                path = SCREENSHOTS / f"{browser_name}-{view}-{VIEWPORTS[-1]['width']}.png"
+                page.screenshot(path=str(path), full_page=True, timeout=60_000)
+                assert_nonblank_screenshot(path)

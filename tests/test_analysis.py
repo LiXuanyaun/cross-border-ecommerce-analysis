@@ -112,6 +112,7 @@ def test_exports_have_required_surfaces_and_provenance(tmp_path):
     workbook = load_workbook(paths["excel"], read_only=True)
     required = {
         "summary", "product_analysis", "customer_analysis", "region_analysis",
+        "market_category", "customer_composition", "product_detail_sources",
         "return_analysis", "module_status", "evidence", "data_quality", "fx_rates", "字段说明",
     }
     assert required.issubset(workbook.sheetnames)
@@ -131,5 +132,10 @@ def test_exports_have_required_surfaces_and_provenance(tmp_path):
     assert any("商品分析" in text for text in headings)
     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
     assert manifest["source"]["source_sha256"] == source_hash
+    assert manifest["version"] == "2.5.0"
+    assert manifest["storage"]["backend"] == "sql"
+    assert manifest["storage"]["dataset_id"]
+    assert manifest["storage"]["query_runs"]
+    assert manifest["storage"]["product_detail_queries"]
     assert manifest["module_status"][0]["status"] in {"SUCCESS", "SKIPPED", "FAILED", "FATAL"}
     assert SAMPLE.read_bytes()

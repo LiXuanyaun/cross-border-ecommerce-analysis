@@ -7,12 +7,13 @@ from autoclean.analytics import DatasetContract, FieldSpec, ValidationIssue
 
 
 ECOMMERCE_CONTRACT = DatasetContract(
-    name="cross_border_orders_v1",
+    name="cross_border_orders_v2",
     grain_key="order_id",
     fields=(
         FieldSpec("order_id", required=True, nullable=False, aliases=("订单号", "订单ID")),
         FieldSpec("customer_id", aliases=("客户ID", "用户ID")),
         FieldSpec("product_id", aliases=("商品ID", "SKU")),
+        FieldSpec("product_name", aliases=("商品名称", "产品名称", "Product", "product_title")),
         FieldSpec("category", aliases=("品类", "商品分类")),
         FieldSpec("price", dtype="float", aliases=("单价",)),
         FieldSpec("discount", dtype="float", aliases=("折扣", "折扣率")),
@@ -20,7 +21,8 @@ ECOMMERCE_CONTRACT = DatasetContract(
         FieldSpec("payment_method", aliases=("支付方式",)),
         FieldSpec("order_date", dtype="date", required=True, nullable=False, aliases=("下单日期", "订单日期")),
         FieldSpec("delivery_time_days", dtype="float", aliases=("配送天数", "物流时长")),
-        FieldSpec("region", aliases=("地区", "市场", "国家")),
+        FieldSpec("country", aliases=("国家", "目的国", "销售国家", "market_country")),
+        FieldSpec("region", aliases=("地区", "区域", "大区", "市场")),
         FieldSpec("returned", dtype="boolean", aliases=("是否退货", "退货")),
         FieldSpec("total_amount", dtype="float", required=True, nullable=False, aliases=("GMV", "订单金额", "销售额")),
         FieldSpec("shipping_cost", dtype="float", aliases=("运费",)),

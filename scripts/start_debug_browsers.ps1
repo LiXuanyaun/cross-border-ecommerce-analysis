@@ -83,7 +83,7 @@ function Start-DebugBrowser {
         "--new-window",
         $Url
     )
-    $process = Start-Process -FilePath $executable -ArgumentList $arguments -PassThru
+    $process = Start-Process -FilePath $executable -ArgumentList $arguments -PassThru -WindowStyle Hidden
     Set-Content -LiteralPath (Join-Path $StateRoot "$Browser.pid") -Value $process.Id
 
     $deadline = (Get-Date).AddSeconds($WaitSeconds)

@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crossborder-ai-analytics"
-version = "2.0.0"
+version = "2.5.0"
 description = "Evidence-backed cross-border ecommerce analytics on AutoClean"
 requires-python = ">=3.10"
 dependencies = [
-  "autoclean>=6.4.0,<7",
+  "autoclean @ git+https://github.com/LiXuanyaun/AutoClean-v1.git@v6.6.0",
   "pandas>=2.0.0",
   "numpy>=1.24.0",
   "streamlit>=1.45.0,<2",
@@ -18,13 +18,21 @@ dependencies = [
   "openpyxl>=3.1.0",
   "python-docx>=0.8.11",
   "Pillow>=9.0.0",
+  "fastapi>=0.116.0,<1",
+  "uvicorn[standard]>=0.35.0,<1",
+  "python-multipart>=0.0.20,<1",
+  "httpx>=0.28.0,<1",
 ]
 
 [project.scripts]
 crossborder-analyze = "crossborder_analytics.cli:main"
+crossborder-web = "crossborder_api.main:run"
 
 [tool.setuptools.packages.find]
-include = ["crossborder_analytics*"]
+include = ["crossborder_analytics*", "crossborder_api*"]
+
+[tool.setuptools.package-data]
+crossborder_analytics = ["sql/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
