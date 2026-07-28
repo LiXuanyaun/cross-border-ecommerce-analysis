@@ -28,7 +28,7 @@ CrossBorder AI Analytics 要把跨境电商订单数据转化为可追溯、可�
 
 当前阶段：
 
-项目已经越过上一轮 76 分评估基线，进入更接近试点产品的阶段；但当前最终评分需要重新完整评测，不能沿用旧分数。最新重点是性能进入硬门槛、数据库容量治理、`runtime.py` 继续拆分、真实商业字段接入，以及 Agent 从受控工具观察升级为更完整 planner-executor。
+项目已经越过上一轮 76 分评估基线，进入更接近试点产品的阶段；但当前最终评分需要重新完整评测，不能沿用旧分数。最新重点是性能保持在硬门槛内、数据库容量治理、前端 feature 文件继续细拆、真实商业字段接入，以及 Agent 从受控工具观察升级为更完整 planner-executor。
 
 ---
 
@@ -45,13 +45,14 @@ CrossBorder AI Analytics 要把跨境电商订单数据转化为可追溯、可�
 - DataHub 已有指标目录、规则目录、容量、归档和清理建议，不再只是展示壳。
 - AI 分析师已接入受控 Tool Registry、会话、SSE 事件、执行计划、工具观察、证据绑定和 CC Switch 私有模式导入入口。
 - AI 分析师页面已修复“像假逻辑”的展示问题：右侧结果区现在以本轮问题、本轮回答、工具轨迹和证据摘要为第一屏；对话栏固定高度并内部滚动。
-- 前端完成路由级懒加载、ECharts 按需注册和 chunk 拆分；前端 build、Vitest 和浏览器回归已通过。
+- 前端完成路由级懒加载、ECharts 按需注册、chunk 拆分和 `features/overview`、`features/analytics`、`features/data-hub`、`features/ai-analyst` 功能目录拆分；前端 build、Vitest 和浏览器回归已通过。
+- FastAPI 已拆为 core、analytics、datasets、imports、maintenance、agent 和 reports 路由模块；`runtime.py` 已收缩为兼容 facade，数据集、分析查询、总览/专题 Presenter、Agent Context 和工作项状态已拆到独立组件。
 
 正在进行：
 
 - 重新完整评估当前版本，不再沿用上一轮 76 分结论。
 - 将 100k SQLite 基准压进 15 秒硬门槛，并继续治理 `metric_snapshots`、`entity_assessments`、`topic_detail_cache` 等高增长表。
-- 继续拆分 `crossborder_api/runtime.py`，降低 Web 投影层维护风险。
+- 继续细化前端组件和 Hooks，降低大 feature 文件维护风险。
 - 验证 Agent 回答是否真正随问题、历史对话、scope 和工具结果变化，而不是过度依赖确定性兜底。
 - 准备 3-5 名真实运营人员的试点验证，并用真实问题校准规则、阈值和建议边界。
 
@@ -85,7 +86,8 @@ AutoClean 提供读取、契约、质量、上下文和基础存储能力；`cro
 - `metrics.py`、`anomalies.py`、`diagnosis.py`、`recommendations_v2.py`、`evidence.py`、`insights.py`：确定性分析引擎。
 - `decision.py`、`decision_brief.py`、`opportunities.py`：经营判断、决策简报和增长机会。
 - `phase2_models.py`、`phase2_catalogs.py`、`phase2_storage.py`：领域契约、规则目录、派生对象与任务状态。
-- `crossborder_api/runtime.py`：Overview、Topic、DataHub 和 Agent Context 的 Web 数据适配层；仍偏大，是后续拆分重点。
+- `crossborder_api/runtime.py`：兼容入口和服务组合层；新增 `services.py`、`presenters.py`、`agent_context_builder.py` 承载数据集服务、分析缓存、Web payload 组装、Agent 上下文和工作项状态。
+- `crossborder_api/routes/`：FastAPI 路由模块，按 core、analytics、datasets、imports、maintenance、agent 和 reports 分组；路由不直接访问 `runtime._service`。
 - `crossborder_api/task_lifecycle.py`、`report_runtime.py`、`agent_tools.py`、`telemetry.py`：任务状态校验、同 scope 报告导出、受控工具注册表和结构化 API 日志。
 - `crossborder_api/agent.py`：Agent 会话、模型 provider、CC Switch 导入、SSE 运行事件、确定性兜底和回答契约。
 - `frontend/src/pages/OverviewPage.tsx`：经营总览；`AnalyticsPage.tsx`：五主题分析；`DataHubPage.tsx`：数据中心；`AiAnalystPage.tsx`：AI 分析师。
@@ -135,6 +137,12 @@ Decision: 不再把上一轮 76 分评估写成当前分数；当前状态需要
 Reason: Agent 页面、私有模式路径、前端回归和产品体验已发生新变化，旧分数只能作为历史基线。
 
 Date: 2026-07-22
+
+Decision: React 是主产品界面，Streamlit 保留为旧版兼容和内部口径对照；FastAPI 路由、应用服务和 Presenter 分层，`AnalyticsRuntime` 只保留兼容转发和组合职责。
+
+Reason: 产品试点需要清晰主界面和可维护边界；路由、存储、页面组装、Agent 上下文和任务状态混在 `runtime.py` 会放大回归风险。
+
+Date: 2026-07-28
 
 ---
 
@@ -186,7 +194,7 @@ Date: 2026-07-22
 
 技术风险：
 
-`runtime.py` 仍偏大；SQLite 数据库体积和快照/缓存增长压力仍未完全解决；100k 基准上一次仍高于 15 秒门槛，需重新跑最新版本确认；GitHub Actions 已定义 CI、性能门禁和 Docker smoke test，但还需要持续验证远端环境稳定性。
+前端 feature 文件仍偏大，需要继续拆组件和 Hooks；SQLite 数据库体积和快照/缓存增长压力仍需持续治理；100k 基准已进入 15 秒门槛但存在本机波动，需持续观察；GitHub Actions 已定义 CI、性能门禁和 Docker smoke test，但还需要持续验证远端环境稳定性。
 
 产品风险：
 

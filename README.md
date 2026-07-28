@@ -2,7 +2,7 @@
 
 面向跨境电商运营复盘的证据型经营分析平台。项目以 AutoClean 6.6 为非破坏性数据与质量底座，将规范化订单和版本化分析对象写入 SQLite，再由注册指标、异常规则、诊断、建议和受控 SQL 证据生成 Dashboard、Excel、Markdown、DOCX 和可审计 manifest。
 
-3.1 迭代在 React、TypeScript、TailwindCSS 与 FastAPI 的 Web 界面上补齐真实导入、统一指标规则链、任务闭环、同口径报告、受控 Agent 和性能门禁。原 Streamlit `app.py` 继续保留，用于业务口径对照和兼容运行。
+3.1 迭代在 React、TypeScript、TailwindCSS 与 FastAPI 的 Web 界面上补齐真实导入、统一指标规则链、任务闭环、同口径报告、受控 Agent 和性能门禁。React + FastAPI 是主产品界面；原 Streamlit `app.py` 继续保留为旧版兼容和内部口径对照界面。
 
 ## 核心约束
 
@@ -52,13 +52,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_web.ps1 -Mode private
 
 CC Switch 的 API Key 只进入后端进程内存，不返回浏览器、不写入项目数据库和日志。私有模式的任务状态、Agent 会话、消息、运行和工具事件保存在 `database/crossborder_state.db`；演示模式会话只存在内存中并按 `CROSSBORDER_DEMO_SESSION_TTL` 清理。没有 CC Switch 的部署环境可参考 `.env.example` 配置 OpenAI 兼容模型。
 
-### Streamlit 兼容界面
+### Streamlit 旧版兼容界面
 
 ```powershell
 streamlit run app.py
 ```
 
-默认载入 `data/ecommerce_sales_34500.csv`。侧栏顶部是明确的页面导航；全局只保留影响全部页面的分析周期。上传 CSV/XLSX、字段映射、源币种、基准币种和历史汇率统一收在“数据与口径”区域，区域和品类不作为全局筛选器。
+默认载入 `data/ecommerce_sales_34500.csv`。该界面用于历史兼容、内部调试和口径对照；新交互、新验收和用户试点以 React + FastAPI 为准。侧栏顶部是明确的页面导航；全局只保留影响全部页面的分析周期。上传 CSV/XLSX、字段映射、源币种、基准币种和历史汇率统一收在“数据与口径”区域，区域和品类不作为全局筛选器。
 
 “区域市场”页面提供动态的市场×品类热力图，可在订单偏好和收益贡献之间切换；市场策略矩阵公开规模、利润、退货和履约基准。“商品分析”提供完整分页清单、动态分类、搜索/列筛选、同页商品详情及当前预览下载。“客户分析”的 RFM（客户价值模型）保持固定，分群选择只联动市场/品类构成和客户清单。
 
@@ -72,7 +72,7 @@ Dashboard 所有 Plotly 图表使用同一套响应式布局：时间轴按周�
 
 规范化数据默认保存在 `database/ecommerce.db`。数据库、WAL 和临时文件不会进入 Git；当前数据集编号、入库记录数和数据库版本可在“数据准备”视图查看。
 
-表结构、版本隔离、事务边界和命名查询目录见 [SQLite 数据层说明](docs/SQLITE_DATA_LAYER.md)。
+表结构、版本隔离、事务边界和命名查询目录见 [SQLite 数据层说明](docs/SQLITE_DATA_LAYER.md)。架构边界、导入流程和维护操作见 [Architecture](docs/ARCHITECTURE.md)、[Import Guide](docs/IMPORT_GUIDE.md) 和 [Maintenance Guide](docs/MAINTENANCE.md)。
 
 ## 命令行导出
 
@@ -153,7 +153,9 @@ python -m pytest tests\test_sidebar_browser.py
 ```text
 React SPA
   -> FastAPI /api/v1
-  -> AnalyticsRuntime（请求编排与页面投影）
+  -> route modules（datasets/imports/analytics/agent/reports/maintenance）
+  -> AnalyticsRuntime（兼容入口与组合转发）
+  -> Application Services + Presenters
   -> AnalysisService / AnalysisRequest（单一分析入口）
   -> SQLite + 受控 SQL + ArtifactStore
   -> MetricSnapshot -> Anomaly -> Diagnosis -> Recommendation -> Insight / Opportunity / ActionItem
@@ -183,6 +185,10 @@ docker run --rm -p 8000:8000 `
 
 今日交付总结、可复用工程经验、当前缺点和 P0-P3 优化计划见：
 
+- [项目架构说明](docs/ARCHITECTURE.md)
+- [数据模型路线图](docs/DATA_MODEL_ROADMAP.md)
+- [导入指南](docs/IMPORT_GUIDE.md)
+- [维护指南](docs/MAINTENANCE.md)
 - [CrossBorder v3.1 产品化与可靠性 PRD](docs/PRD_V3.1.md)
 - [v3.1 工程实施 Backlog](docs/V3.1_IMPLEMENTATION_BACKLOG.md)
 - [v3.1 试点计划](docs/V3.1_PILOT_PLAN.md)

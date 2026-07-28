@@ -19,6 +19,8 @@ SQLite 保存 AutoClean 生成的规范化分析视图，为 CrossBorder 的预�
 
 SQL 负责数据集隔离、筛选和聚合；Python 负责利润率、增长率、RFM（客户价值模型）、证据状态和建议规则。Dashboard 和 CLI 默认使用 SQL 后端，数据库失败时不会静默切换到 pandas。
 
+Web 维护操作通过 `crossborder_api.routes.maintenance` 进入，并经由 `DatasetService` 和 `ArtifactStore` 执行；路由层不直接访问 `runtime._service`。
+
 ## 表结构
 
 | 表 | 用途 | 关键字段 |
@@ -77,6 +79,8 @@ python .\scripts\benchmark_sqlite.py
 ```
 
 测试覆盖重复导入复用、数据集隔离、失败回滚、查询日志、筛选参数、商品详情，以及 SQL 与 pandas 结果对账。10 万行基准用于记录流水线、最慢查询、市场品类查询和商品详情耗时，不作为跨机器固定性能承诺。
+
+Scope 容量、归档和清理操作见 [Maintenance Guide](MAINTENANCE.md)。
 
 2026-07-19 本机首次入库基线（Windows、Python 3.14、`storage_reused=False`）：
 
