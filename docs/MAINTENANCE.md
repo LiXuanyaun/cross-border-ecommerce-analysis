@@ -28,6 +28,16 @@ python scripts\benchmark_sqlite.py --rows 100000
 
 The 100,000-row benchmark should remain under the configured threshold and must not show an obvious regression.
 
+For v4 releases also run the browser E2E against `/business/advertising`, `/business/returns` and `/business/logistics` at desktop and 393px widths. Verify no horizontal overflow, nonblank charts, the persistent simulated-data label and the three registered synthetic anomaly scenarios.
+
+## Multi-Business Operations
+
+- Do not edit or delete `data/AdventureWorksDW-data/`; source files are read-only input.
+- Inspect `import_batches` and `import_files` before diagnosing duplicate imports. File hashes and natural business keys are the idempotency record.
+- Use `PRAGMA foreign_key_check` after migration/import failures. Do not repair invalid business facts by bypassing foreign keys.
+- Retain `dataset_id`, source/version and simulation disclosure in incident exports. A missing source, weak association rate or incomplete period must downgrade the conclusion.
+- The controlled Agent may consume only registered multi-business metrics, anomalies and evidence. Keep arbitrary SQL out of prompts, tools and browser payloads.
+
 ## Operational Notes
 
 - Keep `database/`, `.cache/`, generated reports and local WAL files out of Git.

@@ -15,6 +15,9 @@ EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 ROUTES = {
     "/": "经营总览",
     "/analytics": "专题分析",
+    "/business/advertising": "多业务专题分析",
+    "/business/returns": "多业务专题分析",
+    "/business/logistics": "多业务专题分析",
     "/data": "数据中心",
     "/ai": "AI分析师",
 }
@@ -74,6 +77,32 @@ def test_react_primary_pages_at_desktop_and_393px():
                     })""")
                     assert layout["pageWidth"] <= layout["viewport"] + 1, (route, width, layout)
                     assert layout["overflowingButtons"] == [], (route, width, layout["overflowingButtons"])
+                    if route.startswith("/business/"):
+                        page.get_by_text("模拟数据", exact=True).first.wait_for(state="visible", timeout=60_000)
+                        page.locator("canvas").first.wait_for(state="visible", timeout=60_000)
+                        business_layout = page.evaluate("""() => {
+                            const pageMain = Array.from(document.querySelectorAll('main')).at(-1);
+                            const blocks = Array.from(pageMain ? pageMain.children : [])
+                                .map(element => element.getBoundingClientRect())
+                                .filter(box => box.width > 0 && box.height > 0);
+                            const overlaps = blocks.slice(1).filter((box, index) => box.top < blocks[index].bottom - 1).length;
+                            const canvases = Array.from(document.querySelectorAll('canvas'));
+                            const nonblank = canvases.some(canvas => {
+                                const context = canvas.getContext('2d');
+                                if (!context || canvas.width < 20 || canvas.height < 20) return false;
+                                const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+                                let painted = 0;
+                                for (let index = 3; index < pixels.length; index += 16) {
+                                    if (pixels[index] > 0) painted += 1;
+                                    if (painted > 100) return true;
+                                }
+                                return false;
+                            });
+                            return { overlaps, canvases: canvases.length, nonblank };
+                        }""")
+                        assert business_layout["overlaps"] == 0, (route, width, business_layout)
+                        assert business_layout["canvases"] > 0, (route, width, business_layout)
+                        assert business_layout["nonblank"] is True, (route, width, business_layout)
                     screenshot = page.screenshot(full_page=False)
                     assert len(screenshot) > 10_000
                     with Image.open(io.BytesIO(screenshot)) as image:

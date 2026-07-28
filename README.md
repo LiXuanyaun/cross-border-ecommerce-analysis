@@ -1,8 +1,8 @@
-# CrossBorder AI Analytics 3.1.1
+# CrossBorder AI Analytics 4.0.0
 
 面向跨境电商运营复盘的证据型经营分析平台。项目以 AutoClean 6.6 为非破坏性数据与质量底座，将规范化订单和版本化分析对象写入 SQLite，再由注册指标、异常规则、诊断、建议和受控 SQL 证据生成 Dashboard、Excel、Markdown、DOCX 和可审计 manifest。
 
-3.1 迭代在 React、TypeScript、TailwindCSS 与 FastAPI 的 Web 界面上补齐真实导入、统一指标规则链、任务闭环、同口径报告、受控 Agent 和性能门禁。React + FastAPI 是主产品界面；原 Streamlit `app.py` 继续保留为旧版兼容和内部口径对照界面。
+4.0 在既有订单分析之上增加 AdventureWorks 订单适配器，以及独立的广告、退款和物流事实模型。React + FastAPI 是主产品界面；原 Streamlit `app.py` 继续保留为旧版兼容和内部口径对照界面。
 
 ## 核心约束
 
@@ -16,6 +16,8 @@
 - 页面内商品分类、客户分群和热力图模式只改变构成预览、详情与行动清单，不改变固定分析模型和完整报告。
 - 市场增长和产品机会按最新两个完整可比较周期确定性分类；跨两期合计少于 3 单的商品只计入样本不足汇总，不生成机会或行动项。
 - 摘要版和完整版《跨境电商经营分析与行动报告》使用相同指标、机会、行动和证据；报告范围只改变关注对象。
+- AdventureWorks 原始订单与广告、退款、物流模拟扩展严格区分；页面、API 和报告持续显示“模拟数据”，不得将扩展结论表述为真实经营表现。
+- 广告、退款和物流保存在独立事实表；ROAS 只使用 USD 花费和归因收入，退款金额不等同于退货关联 GMV。
 
 ## 安装
 
@@ -95,6 +97,14 @@ date,source_currency,target_currency,rate
 
 周末和节假日最多回溯 7 天。跨币种金额合计要求 100% 汇率覆盖。
 
+## AdventureWorks 多业务导入
+
+将无表头、`|` 分隔的 AdventureWorksDW 文件放在本地只读目录，并将生成的广告、退款、物流 CSV 与场景 manifest 放在同一扩展目录。导入预览会返回文件类型、字段、粒度、关联成功率、错误/警告和模拟数据标识；相同文件哈希与业务唯一键重导入不会增加记录数。
+
+订单适配器保留 `SalesOrderNumber` 和 `SalesOrderLineNumber`，关联产品、品类、客户、地区、币种和汇率维表，再写入既有标准订单模型。扩展数据写入 `dim_campaign`、`dim_carrier`、`dim_return_reason`、`fact_ad_performance_daily`、`bridge_order_attribution`、`fact_returns`、`fact_shipments` 和 `fact_tracking_events`，不改变既有 `orders` 粒度。
+
+专题 API 为 `GET /api/v1/business/{advertising|returns|logistics}?dataset_id=...`。三个页面位于“专题分析”的广告、退款、物流子路由，支持筛选、KPI、趋势、排名、异常、证据和行动建议。
+
 ## 输出
 
 - `analysis_result.xlsx`
@@ -103,6 +113,8 @@ date,source_currency,target_currency,rate
 - `analysis_manifest.json`
 
 Excel 在原有业务 Sheet 之外增加 `metric_definitions`、`metric_snapshots`、`anomalies`、`diagnoses`、`recommendations`、`evidence`、`data_quality_summary`、`data_quality_dimensions`、`field_quality`、`analysis_capability`、`data_improvement_plan` 和 `data_quality_issues`。
+
+多业务数据集还会写入 `广告分析`、`退款分析`、`物流分析` 和 `多业务证据` 工作表；DOCX、Markdown 与 `analysis_manifest.json` 使用完全相同的注册指标、规则版本和证据编号。
 
 ## 测试
 
@@ -189,8 +201,7 @@ docker run --rm -p 8000:8000 `
 - [数据模型路线图](docs/DATA_MODEL_ROADMAP.md)
 - [导入指南](docs/IMPORT_GUIDE.md)
 - [维护指南](docs/MAINTENANCE.md)
-- [CrossBorder v3.1 产品化与可靠性 PRD](docs/PRD_V3.1.md)
-- [v3.1 工程实施 Backlog](docs/V3.1_IMPLEMENTATION_BACKLOG.md)
-- [v3.1 试点计划](docs/V3.1_PILOT_PLAN.md)
+- [多业务数据字典](docs/MULTI_BUSINESS_DATA_DICTIONARY.md)
+- [多业务指标与异常规则](docs/MULTI_BUSINESS_METRICS_AND_RULES.md)
 - [阶段总结与工程化路线图](docs/PROJECT_REVIEW_2026-07-16.md)
 - [今日总结、反思与优化](docs/DAILY_RETROSPECTIVE_2026-07-16.md)

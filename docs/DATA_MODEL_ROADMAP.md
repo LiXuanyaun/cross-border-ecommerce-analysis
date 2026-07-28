@@ -1,8 +1,8 @@
 # Data Model Roadmap
 
-## Current v3.1 Model
+## Current v4.0 Model
 
-The current model keeps the original MVP assumption: one normalized order fact stream is enough to power the current operating review, evidence chain, reports and Agent context.
+The compatible normalized `orders` stream continues to power existing order analysis. v4 adds independent business grains for AdventureWorks-linked advertising, returns and logistics; it does not overload the order fact.
 
 SQLite stores:
 
@@ -12,31 +12,22 @@ SQLite stores:
 - evidence bundles;
 - opportunities, action items and work item state;
 - report and topic-detail supporting artifacts.
+- `business_orders` and `business_order_lines` retain `SalesOrderNumber` and `SalesOrderLineNumber` links.
+- `dim_campaign`, `dim_carrier`, `dim_return_reason` hold reusable advertising, carrier and return-reason dimensions.
+- `fact_ad_performance_daily`, `bridge_order_attribution`, `fact_returns`, `fact_shipments` and `fact_tracking_events` hold their respective grains.
+- `import_batches` and `import_files` preserve source version, SHA-256 hash, batch status and row-level import results.
 
-No schema migration is required for the v3.1.1 architecture refactor.
+All v4 business tables carry `dataset_id`, `import_batch_id`, `data_origin`, `scenario_id`, `generator_version` and raw source linkage keys. Foreign keys enforce valid order, campaign, carrier, return-reason and shipment relationships.
 
-## v3.2 Import Intelligence
+## Import And Quality Controls
 
-The next step is smarter import confirmation, not a new commercial model.
+Implemented controls:
 
-Planned additions:
+- recognize order, dimension, advertising performance, attribution, return, shipment and tracking files;
+- show field preview, grain, association rates, source origin and simulated-data disclosure before commit;
+- reject missing associations, attribution credit above one, invalid click/conversion funnels, refund caps, invalid event sequence/timestamps and domestic customs events;
+- use file SHA-256 plus natural business keys to make re-import idempotent.
 
-- detect order vs. order-item grain;
-- recommend amount semantics in business language;
-- hide technical options by default;
-- ask business-language confirmation when confidence is low.
+## Future Scope
 
-## v4.0 Multi-Source Commercial Model
-
-v4.0 should introduce separate domain tables when the product is ready to analyze channels, campaigns, inventory, refunds, logistics and store operations as first-class facts.
-
-Candidate tables:
-
-- orders and order lines;
-- ad campaign spend;
-- inventory snapshots;
-- refunds;
-- logistics fulfillment;
-- channels, stores, products and other dimensions.
-
-This change should be designed as a migration with explicit compatibility tests and is outside the v3.1.1 architecture refactor.
+Inventory, store and marketplace connector facts remain out of v4.0. Any future source must retain the same provenance columns, respect dataset isolation and register metrics/evidence before it can appear in Dashboard, reports or Agent context.

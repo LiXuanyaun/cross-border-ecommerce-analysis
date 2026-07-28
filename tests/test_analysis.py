@@ -132,7 +132,7 @@ def test_exports_have_required_surfaces_and_provenance(tmp_path):
     assert any("商品分析" in text for text in headings)
     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
     assert manifest["source"]["source_sha256"] == source_hash
-    assert manifest["version"] == "3.1.1"
+    assert manifest["version"] == "4.0.0"
     assert manifest["storage"]["backend"] == "sql"
     assert manifest["storage"]["dataset_id"]
     assert manifest["storage"]["query_runs"]

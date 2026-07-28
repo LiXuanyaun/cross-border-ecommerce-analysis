@@ -8,7 +8,7 @@ from .phase2_models import AnalysisRequest
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="CrossBorder AI Analytics 3.1.1")
+    parser = argparse.ArgumentParser(description="CrossBorder AI Analytics 4.0.0")
     parser.add_argument("input", help="CSV或XLSX订单数据")
     parser.add_argument("--source-currency", required=True, help="无currency字段时的全表源币种")
     parser.add_argument("--target-currency", default="CNY", help="基准币种，默认CNY")

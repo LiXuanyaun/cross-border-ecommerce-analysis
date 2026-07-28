@@ -2,9 +2,18 @@
 
 ## Supported Files
 
-The web import flow accepts CSV and Excel files. Excel imports can preview sheet names and commit a selected sheet.
+The web import flow accepts CSV and Excel order files. v4 also accepts the AdventureWorksDW source adapter input (headerless, pipe-delimited) together with CSV dimension/fact extensions for campaign, carrier, return reason, advertising daily performance, attribution, returns, shipments and tracking events.
 
 The current public contract supports one batch of up to 20 files and blocks unsafe imports before writing business rows.
+
+## AdventureWorks Multi-Business Import
+
+1. Keep `data/AdventureWorksDW-data/` read-only. The adapter reads `FactInternetSales` and its product, category, customer, region, currency and exchange-rate dimensions.
+2. Preview the extension directory. Confirm the detected file type, field sample, business grain, source/version, association rates and simulation warning.
+3. Commit only when there are no `FATAL` validation issues. The importer writes the compatible order model first, then independent business tables in one SQLite transaction.
+4. Reimporting the same source hash and business keys reports duplicates and does not increase rows.
+
+The validation rejects unknown order/campaign/carrier/reason/shipment links, order attribution credit above 1, clicks above impressions, conversions above clicks, refunds above purchased quantities or line amounts, non-strict tracking time order, returns before delivery, non-cross-border customs events and non-USD advertising ROAS inputs.
 
 ## Required Fields
 
@@ -32,3 +41,5 @@ Optional fields unlock richer analysis, including market, product, customer, pro
 - Order-grain imports require unique order IDs.
 - Order-item imports require explicit amount semantics.
 - Fatal contract issues return `BLOCKED` and do not write partial business rows.
+- Every business row stores `dataset_id`, `import_batch_id`, `data_origin`, `scenario_id`, `generator_version` and its source business key.
+- `synthetic_extension` must stay visibly labelled as simulated data in preview, API, Dashboard and reports.
