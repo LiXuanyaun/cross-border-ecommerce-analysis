@@ -16,9 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from .agent import AgentManager
 from autoclean.analytics import SQLiteStorageError
 from autoclean.analytics.io import FatalError
-from crossborder_analytics.database import CrossBorderDatabase
 from crossborder_analytics.phase2_storage import (
-    ArtifactStore,
     DEFAULT_KEEP_LATEST_SCOPES,
     DEFAULT_MAX_ENTITY_ASSESSMENTS_PER_SCOPE,
 )
@@ -293,16 +291,16 @@ def update_work_item(item_id: str, payload: WorkItemPatch):
 
 @app.get("/api/v1/scopes/capacity")
 def scope_capacity():
-    if runtime._service.database_path is None:
+    if runtime.dataset_service.database_path is None:
         raise HTTPException(503, "分析存储未配置")
-    return envelope(ArtifactStore(runtime._service.database_path).capacity())
+    return envelope(runtime.dataset_service.artifact_store().capacity())
 
 
 @app.post("/api/v1/scopes/{scope_id}/archive")
 def archive_scope(scope_id: str):
-    if runtime._service.database_path is None:
+    if runtime.dataset_service.database_path is None:
         raise HTTPException(503, "分析存储未配置")
-    archived = ArtifactStore(runtime._service.database_path).archive_scope(scope_id)
+    archived = runtime.dataset_service.artifact_store().archive_scope(scope_id)
     if not archived:
         raise HTTPException(404, "分析范围不存在或正在计算")
     runtime.clear_analysis_cache()
@@ -319,13 +317,13 @@ def cleanup_scopes(
     keep_low_sample_assessments: bool = Query(False),
     purge_duplicate_datasets: bool = Query(True),
 ):
-    if runtime._service.database_path is None:
+    if runtime.dataset_service.database_path is None:
         raise HTTPException(503, "分析存储未配置")
-    store = ArtifactStore(runtime._service.database_path)
+    store = runtime.dataset_service.artifact_store()
     purged_duplicate_datasets = []
     purged_dataset_scopes = []
     if purge_duplicate_datasets:
-        purged_duplicate_datasets = CrossBorderDatabase(runtime._service.database_path).purge_duplicate_ready_datasets()
+        purged_duplicate_datasets = runtime.dataset_service.database().purge_duplicate_ready_datasets()
         purged_dataset_scopes = store.cleanup_dataset_scopes(purged_duplicate_datasets)
     cleared_topic_cache_rows = store.clear_topic_detail_cache() if clear_topic_cache else 0
     trimmed_entity_assessments = store.trim_entity_assessments(

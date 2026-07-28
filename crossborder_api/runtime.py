@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
-from threading import RLock
 from typing import Any
 import math
 import os
@@ -11,17 +10,14 @@ import os
 import pandas as pd
 
 from crossborder_analytics.localization import value_for
-from crossborder_analytics.database import CrossBorderDatabase
 from crossborder_analytics.decision_brief import build_decision_brief
 from crossborder_analytics.phase2_catalogs import ANOMALY_RULES, METRICS_CATALOG
-from crossborder_analytics.phase2_models import AnalysisRequest
-from crossborder_analytics.phase2_storage import ArtifactStore
 from crossborder_analytics.service import AnalysisService
 from crossborder_analytics.data_quality import assess_business_quality
 from crossborder_analytics.modules import amount_column
 from .report_runtime import export_scoped_bundle
 from .agent_tools import build_agent_tool_registry
-from .dataset_import_runtime import import_datasets as import_uploaded_datasets
+from .services import AnalysisQueryService, DatasetService, DemoScenario, SCENARIOS
 from .state import StateStore
 from .task_lifecycle import normalize_work_item_patch
 from .topic_decisions import formal_topic_decisions
@@ -29,25 +25,6 @@ from .topic_decisions import formal_topic_decisions
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = ROOT / "data" / "ecommerce_sales_34500.csv"
-
-
-@dataclass(frozen=True)
-class DemoScenario:
-    dataset_id: str
-    name: str
-    description: str
-    filters: dict[str, tuple[str, ...]]
-    source_type: str
-    is_demo: bool = True
-    created_at: str | None = None
-    metadata: dict[str, Any] | None = None
-
-
-SCENARIOS = (
-    DemoScenario("demo-all", "全量经营演示数据", "完整订单样例，覆盖经营、商品、客户与退货分析", {}, "只读样例"),
-    DemoScenario("demo-west", "区域经营演示数据", "从全量样例筛选 West 区域形成的可追溯场景", {"region": ("West",)}, "派生场景"),
-    DemoScenario("demo-risk", "退货风险演示数据", "从全量样例筛选 Electronics 品类形成的风险场景", {"category": ("Electronics",)}, "派生场景"),
-)
 
 
 def _clean(value: Any) -> Any:
@@ -133,9 +110,18 @@ def _threshold_text(rule) -> str:
 class AnalyticsRuntime:
     def __init__(self) -> None:
         self.app_mode = os.getenv("CROSSBORDER_APP_MODE", "demo").strip().lower()
-        self._lock = RLock()
-        self._context = None
         self._service = AnalysisService(cache_dir=ROOT / ".cache" / "fx")
+        self.dataset_service = DatasetService(self._service, SAMPLE)
+        self.analysis_query_service = AnalysisQueryService(self.dataset_service)
+        cached_bundle = lru_cache(maxsize=64)(self._bundle_uncached)
+        self._bundle_cache_clear = cached_bundle.cache_clear
+
+        def clear_bundle_cache() -> None:
+            self.clear_analysis_cache()
+
+        cached_bundle.cache_clear = clear_bundle_cache
+        self.bundle = cached_bundle
+        self.dataset_service.set_cache_clearer(self.clear_analysis_cache)
         self.agent_tools = build_agent_tool_registry()
         self.state_store = None
         if self.app_mode == "private":
@@ -144,65 +130,32 @@ class AnalyticsRuntime:
         self._work_items = self.state_store.load_work_items() if self.state_store else {}
 
     def _ensure_context(self):
-        if self._context is None:
-            with self._lock:
-                if self._context is None:
-                    self._context = self._service.prepare(
-                        SAMPLE, source_currency="CNY", target_currency="CNY"
-                    )
-        return self._context
+        return self.dataset_service.ensure_demo_context()
 
-    def _database(self) -> CrossBorderDatabase:
-        if self._service.database_path is None:
-            raise RuntimeError("SQL 数据库未配置")
-        return CrossBorderDatabase(self._service.database_path)
+    def _database(self):
+        return self.dataset_service.database()
 
-    def _artifact_store(self) -> ArtifactStore:
-        if self._service.database_path is None:
-            raise RuntimeError("分析结果存储未配置")
-        return ArtifactStore(self._service.database_path)
+    def _artifact_store(self):
+        return self.dataset_service.artifact_store()
 
     def _imported_scenarios(self) -> tuple[DemoScenario, ...]:
-        output = []
-        for item in self._database().list_datasets():
-            metadata = item["metadata"]
-            filename = item.get("filename") or "上传数据"
-            output.append(DemoScenario(
-                dataset_id=item["dataset_id"],
-                name=str(metadata.get("dataset_name") or Path(filename).stem),
-                description="由 {} 导入的正式数据集".format(filename),
-                filters={},
-                source_type="Web 上传",
-                is_demo=False,
-                created_at=item["created_at"],
-                metadata=metadata,
-            ))
-        return tuple(output)
+        return self.dataset_service.imported_scenarios()
 
     def _context_for(self, dataset_id: str):
-        if any(item.dataset_id == dataset_id for item in SCENARIOS):
-            return self._ensure_context()
-        context = self._database().load_context(dataset_id)
-        if context is None:
-            raise KeyError(dataset_id)
-        return context
+        return self.dataset_service.context_for(dataset_id)
 
     def clear_analysis_cache(self) -> None:
-        self.bundle.cache_clear()
+        self._bundle_cache_clear()
+        self.analysis_query_service.clear_cache()
         self._topic_base.cache_clear()
 
     def scenario(self, dataset_id: str) -> DemoScenario:
-        for item in SCENARIOS + self._imported_scenarios():
-            if item.dataset_id == dataset_id:
-                return item
-        raise KeyError(dataset_id)
+        return self.dataset_service.scenario(dataset_id)
 
     def date_bounds(self, dataset_id: str = "demo-all") -> tuple[str, str]:
-        frame = self._context_for(dataset_id).analysis_data
-        return frame.order_date.min().date().isoformat(), frame.order_date.max().date().isoformat()
+        return self.dataset_service.date_bounds(dataset_id)
 
-    @lru_cache(maxsize=64)
-    def bundle(
+    def _bundle_uncached(
         self,
         dataset_id: str,
         start: str | None = None,
@@ -213,19 +166,8 @@ class AnalyticsRuntime:
         analysis_mode: str = "full",
         topic: str | None = None,
     ):
-        scenario = self.scenario(dataset_id)
-        filters: dict[str, Any] = {key: list(values) for key, values in scenario.filters.items()}
-        if start and end:
-            filters["order_date"] = (start, end)
-        if market:
-            filters["region"] = [market]
-        if category:
-            filters["category"] = [category]
-        return self._service.run(
-            self._context_for(dataset_id),
-            request=AnalysisRequest(
-                filters=filters, period_type=period_type, analysis_mode=analysis_mode, topic=topic,
-            ),
+        return self.analysis_query_service.bundle(
+            dataset_id, start, end, market, category, period_type, analysis_mode, topic,
         )
 
     def meta(self, bundle, dataset_id: str) -> dict[str, Any]:
@@ -1352,9 +1294,10 @@ class AnalyticsRuntime:
         source_currency: str | None,
         target_currency: str,
     ) -> dict[str, Any]:
-        return self.import_datasets(
-            [(loaded, source_file_id)],
+        return self.dataset_service.import_dataset(
+            loaded,
             mapping=mapping,
+            source_file_id=source_file_id,
             dataset_name=dataset_name,
             data_grain=data_grain,
             amount_semantic=amount_semantic,
@@ -1373,8 +1316,7 @@ class AnalyticsRuntime:
         source_currency: str | None,
         target_currency: str,
     ) -> dict[str, Any]:
-        return import_uploaded_datasets(
-            self,
+        return self.dataset_service.import_datasets(
             loaded_files,
             mapping=mapping,
             dataset_name=dataset_name,

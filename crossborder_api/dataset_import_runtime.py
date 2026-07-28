@@ -12,7 +12,7 @@ from crossborder_analytics.contract import ECOMMERCE_CONTRACT, ECOMMERCE_IMPORT_
 
 
 def import_datasets(
-    runtime,
+    dataset_service,
     loaded_files: list[tuple[Any, str]],
     *,
     mapping: dict[str, str],
@@ -61,7 +61,7 @@ def import_datasets(
     contract = ECOMMERCE_CONTRACT if data_grain == "order" else ECOMMERCE_IMPORT_CONTRACT
     contexts = []
     for loaded, source_file_id in unique_files:
-        context = runtime._service.prepare_loaded(
+        context = dataset_service.analysis_service.prepare_loaded(
             loaded,
             mapping=mapping,
             source_currency=source_currency,
@@ -154,8 +154,8 @@ def import_datasets(
             "row_count": 0,
             "issues": [issue.to_dict() for issue in context.issues],
         }
-    stored = runtime._service.persist(context)
-    runtime.clear_analysis_cache()
+    stored = dataset_service.analysis_service.persist(context)
+    dataset_service.clear_analysis_cache()
     return {
         "status": "READY",
         "dataset_id": stored.dataset_id,
