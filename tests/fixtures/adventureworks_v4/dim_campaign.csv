@@ -1,0 +1,2 @@
+campaign_id,campaign_name,channel,platform,objective,target_country_code,target_country,sales_territory_key_scope,billing_currency,active_start_date,active_end_date,synthetic_note,data_origin,generator_version,scenario_id,seed,generated_at
+CMP-DE-SEARCH-GENERIC,Germany Search,Search,Google Ads,Conversion,DE,Germany,1,USD,2013-01-01,2014-12-31,fixture,synthetic_extension,1.0.0,SCN_AD_DE_SEARCH_EFFICIENCY_DECLINE,20260728,2026-07-28T00:00:00.000Z

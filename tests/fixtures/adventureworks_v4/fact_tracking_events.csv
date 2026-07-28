@@ -1,0 +1,4 @@
+tracking_event_id,shipment_id,sales_order_number,tracking_number,event_sequence,event_code,event_timestamp,event_location,carrier_id,cross_border_flag,exception_flag,synthetic_note,data_origin,generator_version,scenario_id,seed,generated_at
+EVT-1,SHP-1,SO1,TRACK-1,1,PICKED_UP,2013-10-02T08:00:00.000Z,Seattle,CAR-003,1,0,fixture,synthetic_extension,1.0.0,BASELINE,20260728,2026-07-28T00:00:00.000Z
+EVT-2,SHP-1,SO1,TRACK-1,2,CUSTOMS_HOLD,2013-10-03T08:00:00.000Z,Berlin,CAR-003,1,1,fixture,synthetic_extension,1.0.0,SCN_LOGISTICS_EU_CUSTOMS_DELAY,20260728,2026-07-28T00:00:00.000Z
+EVT-3,SHP-1,SO1,TRACK-1,3,DELIVERED,2013-10-05T08:00:00.000Z,Berlin,CAR-003,1,0,fixture,synthetic_extension,1.0.0,SCN_LOGISTICS_EU_CUSTOMS_DELAY,20260728,2026-07-28T00:00:00.000Z

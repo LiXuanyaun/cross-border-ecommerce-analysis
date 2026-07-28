@@ -1,0 +1,2 @@
+carrier_id,carrier_name,service_level,carrier_type,synthetic_note,data_origin,generator_version,scenario_id,seed,generated_at
+CAR-003,GlobalPost,International Economy,Parcel,fixture,synthetic_extension,1.0.0,SCN_LOGISTICS_EU_CUSTOMS_DELAY,20260728,2026-07-28T00:00:00.000Z

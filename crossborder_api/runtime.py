@@ -14,6 +14,7 @@ from crossborder_analytics.phase2_catalogs import ANOMALY_RULES, METRICS_CATALOG
 from crossborder_analytics.service import AnalysisService
 from crossborder_analytics.data_quality import assess_business_quality
 from crossborder_analytics.modules import amount_column
+from crossborder_analytics.multibusiness_import import MultiBusinessImportService
 from .report_runtime import export_scoped_bundle
 from .agent_tools import build_agent_tool_registry
 from .services import AnalysisQueryService, DatasetService, DemoScenario, SCENARIOS, WorkItemService
@@ -111,6 +112,9 @@ class AnalyticsRuntime:
         self._service = AnalysisService(cache_dir=ROOT / ".cache" / "fx")
         self.dataset_service = DatasetService(self._service, SAMPLE)
         self.analysis_query_service = AnalysisQueryService(self.dataset_service)
+        self.multi_business_import_service = MultiBusinessImportService(
+            self._service.database_path, self._service,
+        )
         from .presenters import OverviewPresenter, TopicPresenter
         self.overview_presenter = OverviewPresenter(self)
         self.topic_presenter = TopicPresenter(self)

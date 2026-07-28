@@ -1,0 +1,2 @@
+ad_date,campaign_id,target_country_code,channel,platform,billing_currency,impressions,clicks,conversions,spend,attributed_revenue_usd,ctr,conversion_rate,cost_per_click,cost_per_acquisition,roas,synthetic_note,data_origin,generator_version,scenario_id,seed,generated_at
+2013-10-01,CMP-DE-SEARCH-GENERIC,DE,Search,Google Ads,USD,1000,100,1,100,20,0.1,0.01,1,100,0.2,fixture,synthetic_extension,1.0.0,SCN_AD_DE_SEARCH_EFFICIENCY_DECLINE,20260728,2026-07-28T00:00:00.000Z

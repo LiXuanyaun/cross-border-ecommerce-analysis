@@ -13,6 +13,23 @@ from ..import_preview import UploadedFilePayload, build_import_preview, load_upl
 router = APIRouter(prefix="/api/v1")
 
 
+@router.post("/imports/adventureworks/preview")
+def adventureworks_preview(directory: str = Form(...)):
+    try:
+        return envelope(runtime.multi_business_import_service.preview_directory(directory))
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
+
+
+@router.post("/imports/adventureworks")
+def adventureworks_import(directory: str = Form(...)):
+    try:
+        result = runtime.multi_business_import_service.import_directory(directory)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc))
+    return envelope(result, dataset_id=result.get("dataset_id"))
+
+
 @router.post("/imports/preview")
 async def import_preview(
     files: list[UploadFile] = File(...),

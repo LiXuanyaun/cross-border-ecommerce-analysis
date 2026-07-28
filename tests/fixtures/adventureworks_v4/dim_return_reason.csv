@@ -1,0 +1,2 @@
+return_reason_id,return_reason_code,reason_category,reason_description,synthetic_note,data_origin,generator_version,scenario_id,seed,generated_at
+RR-SIZE,SIZE_TOO_SMALL,Size / Fit,Size issue,fixture,synthetic_extension,1.0.0,SCN_RET_CLOTHING_SIZE_SPIKE,20260728,2026-07-28T00:00:00.000Z
