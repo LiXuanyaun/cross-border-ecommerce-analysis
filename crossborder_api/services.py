@@ -84,9 +84,13 @@ class DatasetService:
             output.append(DemoScenario(
                 dataset_id=item["dataset_id"],
                 name=str(metadata.get("dataset_name") or Path(filename).stem),
-                description="由 {} 导入的正式数据集".format(filename),
+                description=(
+                    "AdventureWorks 订单及模拟多业务扩展"
+                    if metadata.get("import_origin") == "adventureworks"
+                    else "由 {} 导入的正式数据集".format(filename)
+                ),
                 filters={},
-                source_type="Web 上传",
+                source_type="AdventureWorks + 模拟扩展" if metadata.get("import_origin") == "adventureworks" else "Web 上传",
                 is_demo=False,
                 created_at=item["created_at"],
                 metadata=metadata,

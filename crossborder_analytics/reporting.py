@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 from matplotlib import font_manager
 import numpy as np
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from autoclean.analytics import AnalysisStatus, DocxReportBuilder, ExcelBundleWriter
 from crossborder_analytics.localization import (
@@ -115,6 +117,36 @@ def _flat_frame(frame: pd.DataFrame) -> pd.DataFrame:
     return output
 
 
+def _clip_report_text(value: Any, limit: int = 180) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    if isinstance(value, (dict, list, tuple, set)):
+        value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    text = str(value)
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+def _docx_evidence_bullets(frame: pd.DataFrame) -> list[str]:
+    """Keep the DOCX evidence appendix readable; full objects stay in Excel/manifest."""
+    if frame.empty:
+        return []
+    items = []
+    for row in frame.head(40).to_dict("records"):
+        items.append(
+            "证据 {}；查询 {}；期间 {} 至 {}；样本 {:,} 行；公式：{}；结果摘要：{}；限制：{}。".format(
+                _clip_report_text(row.get("evidence_id"), 36),
+                _clip_report_text(row.get("query_name"), 48),
+                _clip_report_text(row.get("period_start"), 20),
+                _clip_report_text(row.get("period_end"), 20),
+                int(row.get("row_count") or 0),
+                _clip_report_text(row.get("formula"), 160),
+                _clip_report_text(row.get("result_digest"), 24),
+                _clip_report_text(row.get("limitations"), 140),
+            )
+        )
+    return items
+
+
 def _scope_frames(artifacts, report_scope="overall", scope_value=None):
     markets = pd.DataFrame(artifacts.records("market_opportunities")) if artifacts else pd.DataFrame()
     products = pd.DataFrame(artifacts.records("product_opportunities")) if artifacts else pd.DataFrame()
@@ -135,7 +167,42 @@ def _scope_frames(artifacts, report_scope="overall", scope_value=None):
     return markets, products, actions
 
 
-def output_frames(bundle, report_scope="overall", scope_value=None) -> Dict[str, pd.DataFrame]:
+def _business_report_frame(payload: dict[str, Any]) -> pd.DataFrame:
+    rows = []
+    for metric in payload.get("metrics", []):
+        rows.append({"record_type": "metric", **metric})
+    for anomaly in payload.get("anomalies", []):
+        rows.append({"record_type": "anomaly", **anomaly})
+    for action in payload.get("actions", []):
+        rows.append({"record_type": "action", **action})
+    return pd.DataFrame(rows)
+
+
+def _style_excel_report(path: Path) -> None:
+    """Make report tables legible regardless of the spreadsheet viewer theme."""
+    workbook = load_workbook(path)
+    header_fill = PatternFill("solid", fgColor="17212B")
+    body_fill = PatternFill("solid", fgColor="F7F8F6")
+    header_font = Font(name="Microsoft YaHei", bold=True, color="FFFFFF")
+    body_font = Font(name="Microsoft YaHei", color="17212B")
+    header_alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    body_alignment = Alignment(vertical="top", wrap_text=True)
+    border = Border(bottom=Side(style="hair", color="DDE3E0"))
+    for worksheet in workbook.worksheets:
+        worksheet.sheet_view.showGridLines = False
+        worksheet.freeze_panes = "A2"
+        worksheet.auto_filter.ref = worksheet.calculate_dimension()
+        for row_index, row in enumerate(worksheet.iter_rows(), start=1):
+            for cell in row:
+                cell.fill = header_fill if row_index == 1 else body_fill
+                cell.font = header_font if row_index == 1 else body_font
+                cell.alignment = header_alignment if row_index == 1 else body_alignment
+                cell.border = border
+        worksheet.row_dimensions[1].height = 28
+    workbook.save(path)
+
+
+def output_frames(bundle, report_scope="overall", scope_value=None, business_analysis=None) -> Dict[str, pd.DataFrame]:
     overview = _result(bundle, "overview")
     summary = pd.DataFrame([
         {"metric": key, "value": value, "currency": bundle.context.metadata.get("target_currency", "")}
@@ -202,6 +269,18 @@ def output_frames(bundle, report_scope="overall", scope_value=None) -> Dict[str,
             "行动清单": action_items,
             "机会汇总": pd.DataFrame(artifacts.records("opportunity_summary")),
         })
+    if business_analysis:
+        labels = {"advertising": "广告分析", "returns": "退款分析", "logistics": "物流分析"}
+        raw_frames.update({
+            labels[topic]: _business_report_frame(payload)
+            for topic, payload in business_analysis.items()
+            if topic in labels
+        })
+        raw_frames["多业务证据"] = pd.DataFrame([
+            {"topic": topic, **item}
+            for topic, payload in business_analysis.items()
+            for item in payload.get("evidence", [])
+        ])
     localized = {name: localize_frame(_flat_frame(frame)) for name, frame in raw_frames.items()}
     localized["字段说明"] = field_guide_frame()
     return localized
@@ -219,7 +298,7 @@ def _pct(value):
     return "{:.2%}".format(float(value))
 
 
-def build_markdown(bundle) -> str:
+def build_markdown(bundle, business_analysis=None) -> str:
     currency = bundle.context.metadata.get("target_currency", "")
     overview = _result(bundle, "overview")
     sales = _result(bundle, "sales")
@@ -329,6 +408,22 @@ def build_markdown(bundle) -> str:
             lines.append("- 当前不能判断：{}；原因：{}。".format(
                 item["conclusion"], "、".join(item.get("reasons", [])) or "关键证据不足"
             ))
+    if business_analysis:
+        labels = {"advertising": "广告分析", "returns": "退款分析", "logistics": "物流分析"}
+        for topic in ("advertising", "returns", "logistics"):
+            payload = business_analysis.get(topic)
+            if not payload:
+                continue
+            lines.extend(["", "## {}（模拟数据）".format(labels[topic])])
+            for metric in payload.get("metrics", []):
+                lines.append("- {}：{}；公式：`{}`；证据：`[{}]`。".format(
+                    metric["label"], metric.get("value"), metric["formula"], metric["evidence_id"],
+                ))
+            for anomaly in payload.get("anomalies", [])[:5]:
+                lines.append("- 异常：{}（{}）；阈值：{}；建议：{}。".format(
+                    anomaly["title"], anomaly["entity"], anomaly["threshold"], anomaly["recommendation"],
+                ))
+        lines.extend(["", "> 广告、退款和物流来自 synthetic_extension 模拟数据，不代表真实经营表现。"])
     lines.extend([
         "", "## 结论", "所有结论均来自本次分析证据对象；缺少字段、样本不足和不完整周期均未被强行推断。",
         "", "## 模块状态", "| 模块 | 状态 | 说明 |", "|---|---|---|",
@@ -426,7 +521,72 @@ def _report_scope_label(report_scope: str, scope_value: Any) -> str:
     return "{} · {}".format(base, scope_value) if report_scope != "overall" and scope_value else base
 
 
-def _summary_docx(bundle, output_path: Path, report_scope="overall", scope_value=None, include_action_details=True) -> Path:
+def _append_business_docx_sections(report, business_analysis, start_index: int) -> int:
+    labels = {"advertising": "广告分析", "returns": "退款分析", "logistics": "物流分析"}
+    index = start_index
+    for topic in ("advertising", "returns", "logistics"):
+        payload = (business_analysis or {}).get(topic)
+        if not payload:
+            continue
+        report.heading("{}. {}（模拟数据）".format(index, labels[topic]), page_break=True)
+        source = payload.get("data_source", {})
+        report.paragraph(
+            "数据来源：{}。{}".format(
+                source.get("description") or source.get("label") or "synthetic_extension",
+                "本节仅用于功能验证，不代表真实经营表现。",
+            )
+        )
+        report.heading("指标与口径", level=2)
+        metrics = [
+            "{}：{}{}；公式：{}；证据：{}。".format(
+                item.get("label"), _clip_report_text(item.get("value"), 32),
+                " {}".format(item["currency"]) if item.get("currency") else "",
+                item.get("formula"), item.get("evidence_id"),
+            )
+            for item in payload.get("metrics", [])
+        ]
+        if metrics:
+            report.bullets(metrics)
+        else:
+            report.paragraph("当前分析范围没有可计算的注册指标。")
+        report.heading("异常、阈值与证据", level=2)
+        anomalies = [
+            "{}（{}）；规则 {} v{}；阈值：{}；原因：{}；证据：{}。".format(
+                item.get("title"), item.get("entity"), item.get("rule_id"),
+                item.get("rule_version"), item.get("threshold"), item.get("reason"),
+                _clip_report_text(item.get("evidence_ids"), 120),
+            )
+            for item in payload.get("anomalies", [])
+        ]
+        if anomalies:
+            report.bullets(anomalies)
+        else:
+            report.paragraph("当前分析范围未命中版本化异常规则。")
+        report.heading("行动建议", level=2)
+        actions = [
+            "{}：{}；复核阈值：{}；证据：{}。".format(
+                item.get("priority"), item.get("title"), item.get("threshold"),
+                _clip_report_text(item.get("evidence_ids"), 120),
+            )
+            for item in payload.get("actions", [])
+        ]
+        if actions:
+            report.bullets(actions)
+        else:
+            report.paragraph("当前证据未达到行动阈值，建议维持监测。")
+        limitations = list(dict.fromkeys(
+            payload.get("limitations", []) + payload.get("quality", {}).get("limitations", [])
+        ))
+        report.heading("数据限制", level=2)
+        report.bullets(limitations or ["模拟扩展数据不用于真实经营决策。"])
+        index += 1
+    return index
+
+
+def _summary_docx(
+    bundle, output_path: Path, report_scope="overall", scope_value=None,
+    include_action_details=True, business_analysis=None,
+) -> Path:
     currency = bundle.context.metadata.get("target_currency", "")
     report = DocxReportBuilder("跨境电商经营分析与行动报告")
     report.cover("跨境电商经营分析与行动报告 · 摘要版", {
@@ -492,15 +652,19 @@ def _summary_docx(bundle, output_path: Path, report_scope="overall", scope_value
     else:
         report.paragraph("当前关键分析能力未发现字段级阻断。")
     report.paragraph("报告中的变化与贡献不代表广告、活动、库存或竞争变化等真实经营因果。")
+    _append_business_docx_sections(report, business_analysis, 7)
     return report.save(output_path)
 
 
 def build_docx(
     bundle, output_path: Path, report_version="full", report_scope="overall",
-    scope_value=None, include_action_details=True,
+    scope_value=None, include_action_details=True, business_analysis=None,
 ) -> Path:
     if report_version == "summary":
-        return _summary_docx(bundle, output_path, report_scope, scope_value, include_action_details)
+        return _summary_docx(
+            bundle, output_path, report_scope, scope_value, include_action_details,
+            business_analysis,
+        )
     currency = bundle.context.metadata.get("target_currency", "")
     report = DocxReportBuilder("跨境电商经营分析与行动报告")
     report.cover("跨境电商经营分析与行动报告 · 完整版", {
@@ -640,11 +804,13 @@ def build_docx(
             improvements = pd.DataFrame(artifacts.records("data_improvement_plan"))
             if not improvements.empty:
                 report.table(localize_frame(_flat_frame(improvements)), 20)
-        report.heading("15. 总结", page_break=True)
-        report.paragraph("本报告从经营规模、销售变化、商品、客户、区域与退货六个角度形成可追溯分析。所有建议均绑定证据编号，未将相关性写成因果关系。")
+        summary_index = _append_business_docx_sections(report, business_analysis, 15)
+        report.heading("{}. 总结".format(summary_index))
+        report.paragraph("本报告从经营规模、销售变化、商品、客户、区域、退货及多业务专题形成可追溯分析。所有建议均绑定证据编号，未将相关性写成因果关系。")
         report.heading("附录：SQL 与指标证据索引", level=2)
         evidence_frame = pd.DataFrame(artifacts.records("evidence")) if artifacts else bundle.evidence_frame()
-        report.table(localize_frame(_flat_frame(evidence_frame.round(4) if not evidence_frame.empty else evidence_frame)), 40)
+        report.paragraph("本附录仅展示可审计索引；完整查询参数、指标快照关联和原始关联键保留在 Excel 与 manifest。")
+        report.bullets(_docx_evidence_bullets(evidence_frame) or ["当前没有可用的 SQL 证据索引。"])
         return report.save(output_path)
 
 
@@ -662,28 +828,30 @@ def _json_safe(value):
 
 def export_bundle(
     bundle, output_dir: Any, report_version="full", report_scope="overall",
-    scope_value=None, include_action_details=True,
+    scope_value=None, include_action_details=True, business_analysis=None,
 ) -> Dict[str, Path]:
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
+    excel_path = ExcelBundleWriter().write(
+        output_frames(bundle, report_scope, scope_value, business_analysis), directory / "analysis_result.xlsx"
+    )
+    _style_excel_report(excel_path)
     paths = {
-        "excel": ExcelBundleWriter().write(
-            output_frames(bundle, report_scope, scope_value), directory / "analysis_result.xlsx"
-        ),
+        "excel": excel_path,
         "markdown": directory / "cross_border_analysis_report.md",
         "docx": directory / "cross_border_analysis_report.docx",
         "manifest": directory / "analysis_manifest.json",
     }
-    paths["markdown"].write_text(build_markdown(bundle), encoding="utf-8")
+    paths["markdown"].write_text(build_markdown(bundle, business_analysis), encoding="utf-8")
     build_docx(
         bundle, paths["docx"], report_version, report_scope, scope_value,
-        include_action_details,
+        include_action_details, business_analysis,
     )
     artifacts = getattr(bundle, "artifacts", None)
     scope_id = bundle.metadata.get("scope_id")
     manifest = {
         "project": "CrossBorder AI Analytics",
-        "version": "3.1.1",
+        "version": "4.0.0",
         "generated_at": bundle.generated_at,
         "scope_id": scope_id,
         "analysis_request": bundle.metadata.get("analysis_request", {}),
@@ -719,6 +887,7 @@ def export_bundle(
         "analysis_capability": artifacts.records("analysis_capability") if artifacts else [],
         "data_improvement_plan": artifacts.records("data_improvement_plan") if artifacts else [],
         "unsupported_conclusions": artifacts.unsupported_conclusions if artifacts else [],
+        "business_analysis": business_analysis or {},
         "legacy_evidence": bundle.evidence_frame().to_dict("records"),
         "outputs": {key: path.name for key, path in paths.items()},
     }

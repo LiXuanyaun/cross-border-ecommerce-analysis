@@ -83,13 +83,18 @@ class MultiBusinessAnalysisService:
     def list_datasets(self) -> list[dict[str, Any]]:
         if not self.database_path.exists():
             return []
-        with closing(sqlite3.connect(str(self.database_path))) as connection:
-            connection.row_factory = sqlite3.Row
-            rows = connection.execute(
-                "SELECT b.dataset_id, MIN(b.started_at) imported_at, "
-                "SUM(CASE WHEN b.data_origin='synthetic_extension' THEN 1 ELSE 0 END) extension_batches "
-                "FROM import_batches b GROUP BY b.dataset_id HAVING extension_batches > 0 ORDER BY imported_at DESC"
-            ).fetchall()
+        try:
+            with closing(sqlite3.connect(str(self.database_path))) as connection:
+                connection.row_factory = sqlite3.Row
+                rows = connection.execute(
+                    "SELECT b.dataset_id, MIN(b.started_at) imported_at, "
+                    "SUM(CASE WHEN b.data_origin='synthetic_extension' THEN 1 ELSE 0 END) extension_batches "
+                    "FROM import_batches b GROUP BY b.dataset_id HAVING extension_batches > 0 ORDER BY imported_at DESC"
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" in str(exc):
+                return []
+            raise
         return [
             {
                 "dataset_id": row["dataset_id"],

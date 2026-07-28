@@ -1,4 +1,4 @@
-import { BarChart3, Bell, Bot, ChevronDown, Database, LayoutDashboard, Menu, Search, UserRound, X } from "lucide-react";
+import { BarChart3, Bell, Bot, ChevronDown, Database, LayoutDashboard, Menu, PanelsTopLeft, Search, UserRound, X } from "lucide-react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useState } from "react";
 import { Button, cx, Tooltip } from "./ui";
@@ -7,6 +7,7 @@ import { useAppState } from "../state/app";
 const navigation = [
   { label: "经营总览", path: "/", icon: LayoutDashboard },
   { label: "专题分析", path: "/analytics", icon: BarChart3 },
+  { label: "多业务分析", path: "/business", icon: PanelsTopLeft },
   { label: "数据中心", path: "/data", icon: Database },
   { label: "AI分析师", path: "/ai", icon: Bot },
 ];
@@ -15,7 +16,7 @@ function Sidebar({ mobile, close }: { mobile?: boolean; close?: () => void }) {
   return <aside className={cx("flex h-screen w-[212px] shrink-0 flex-col border-r border-line bg-white", mobile && "w-[260px]")}> 
     <div className="flex h-16 items-center justify-between px-5"><img src="/crossborder-logo.png" className="h-8 w-auto object-contain" alt="CrossBorder"/>{mobile && <Button variant="ghost" className="h-8 w-8 p-0" onClick={close}><X size={18}/></Button>}</div>
     <nav className="mt-3 space-y-1 px-3">{navigation.map(item => <NavLink end={item.path === "/"} to={item.path} key={item.path} onClick={close} className={({ isActive }) => cx("flex h-10 items-center gap-3 rounded-md px-3 text-sm font-medium text-[#475467] transition hover:bg-[#f5f7fa]", isActive && "bg-[#edf3ff] text-brand")}><item.icon size={18}/>{item.label}</NavLink>)}</nav>
-    <div className="mt-auto p-3"><button className="flex w-full items-center gap-3 rounded-md border border-line px-3 py-3 text-left hover:bg-[#fafbfc]"><Database size={18}/><span className="min-w-0 flex-1 truncate text-sm">跨境电商企业</span><ChevronDown size={15} className="text-muted"/></button><div className="mt-4 flex items-center gap-3 px-2"><div className="grid h-9 w-9 place-items-center rounded-full bg-[#f2f4f7] text-muted"><UserRound size={20}/></div><div><p className="text-sm font-medium">未登录用户</p><p className="text-xs text-muted">本地工作区</p></div></div><p className="mt-8 px-2 text-xs text-[#98a2b3]">版本 3.0.0</p></div>
+    <div className="mt-auto p-3"><button className="flex w-full items-center gap-3 rounded-md border border-line px-3 py-3 text-left hover:bg-[#fafbfc]"><Database size={18}/><span className="min-w-0 flex-1 truncate text-sm">跨境电商企业</span><ChevronDown size={15} className="text-muted"/></button><div className="mt-4 flex items-center gap-3 px-2"><div className="grid h-9 w-9 place-items-center rounded-full bg-[#f2f4f7] text-muted"><UserRound size={20}/></div><div><p className="text-sm font-medium">未登录用户</p><p className="text-xs text-muted">本地工作区</p></div></div><p className="mt-8 px-2 text-xs text-[#98a2b3]">版本 4.0.0</p></div>
   </aside>;
 }
 

@@ -42,6 +42,20 @@ class AgentContextBuilder:
         evidence = [item.to_dict() for item in bundle.artifacts.evidence[:3]]
         recommendations = [item.to_dict() for item in bundle.artifacts.recommendations[:5]]
         decision_brief = build_decision_brief(bundle.artifacts, bundle.metadata)
+        business_analysis = {}
+        business_dataset_ids = {
+            item["dataset_id"] for item in self.runtime.multi_business_analysis_service.list_datasets()
+        }
+        if dataset_id in business_dataset_ids:
+            for business_topic in ("advertising", "returns", "logistics"):
+                business_analysis[business_topic] = self.runtime.multi_business_analysis_service.analyze(
+                    business_topic,
+                    dataset_id,
+                    start=start,
+                    end=end,
+                    country=market,
+                    category=category if business_topic == "returns" else None,
+                )
         anomaly_by_id = {item.anomaly_id: item for item in bundle.artifacts.anomalies}
         trace = []
         for insight in bundle.artifacts.insights[:5]:
@@ -71,6 +85,8 @@ class AgentContextBuilder:
             "decision_brief": decision_brief,
             "trace": trace,
         }
+        if business_analysis:
+            execution_context["business_analysis"] = business_analysis
         agent_plan = self.runtime.agent_tools.plan(question, execution_context)
         planned_tools = [
             tool
@@ -79,7 +95,7 @@ class AgentContextBuilder:
         ]
         tool_names = list(dict.fromkeys(planned_tools or tool_names))
         tool_observations = self.runtime.agent_tools.execute_plan(agent_plan, execution_context)
-        return _clean({
+        response_context = {
             "question": question,
             "dataset": {
                 "dataset_id": dataset_id,
@@ -98,4 +114,7 @@ class AgentContextBuilder:
             "decision_brief": decision_brief,
             "trace": trace,
             "tool_observations": tool_observations,
-        }), bundle
+        }
+        if business_analysis:
+            response_context["business_analysis"] = business_analysis
+        return _clean(response_context), bundle

@@ -82,6 +82,8 @@ class AgentToolRegistry:
                 ["plan-1"],
             ),
         ]
+        if context.get("business_analysis"):
+            steps[1].tools.append("query_business_metrics")
         if wants_diagnosis:
             steps.append(AgentPlanStep(
                 "plan-3",
@@ -90,6 +92,8 @@ class AgentToolRegistry:
                 ["list_anomalies", "get_diagnosis", "get_evidence"],
                 ["plan-2"],
             ))
+            if context.get("business_analysis"):
+                steps[-1].tools.extend(["list_business_anomalies", "get_business_evidence"])
         if wants_action:
             steps.append(AgentPlanStep(
                 "plan-4",
@@ -243,6 +247,36 @@ def build_agent_tool_registry() -> AgentToolRegistry:
             [],
         )
 
+    def query_business_metrics(context: dict[str, Any]) -> AgentToolResult:
+        analyses = context.get("business_analysis", {})
+        metrics = [
+            {"topic": topic, **metric}
+            for topic, payload in analyses.items()
+            for metric in payload.get("metrics", [])
+        ]
+        evidence_ids = [item.get("evidence_id") for item in metrics if item.get("evidence_id")]
+        return AgentToolResult("query_business_metrics", "SUCCESS", {"metrics": metrics[:30]}, evidence_ids)
+
+    def list_business_anomalies(context: dict[str, Any]) -> AgentToolResult:
+        analyses = context.get("business_analysis", {})
+        anomalies = [
+            {"topic": topic, **item}
+            for topic, payload in analyses.items()
+            for item in payload.get("anomalies", [])
+        ]
+        evidence_ids = [evidence_id for item in anomalies for evidence_id in item.get("evidence_ids", [])]
+        return AgentToolResult("list_business_anomalies", "SUCCESS", {"anomalies": anomalies[:20]}, evidence_ids)
+
+    def get_business_evidence(context: dict[str, Any]) -> AgentToolResult:
+        analyses = context.get("business_analysis", {})
+        evidence = [
+            {"topic": topic, **item}
+            for topic, payload in analyses.items()
+            for item in payload.get("evidence", [])
+        ]
+        evidence_ids = [item.get("evidence_id") for item in evidence if item.get("evidence_id")]
+        return AgentToolResult("get_business_evidence", "SUCCESS", {"evidence": evidence[:30]}, evidence_ids)
+
     return AgentToolRegistry({
         "get_dataset_profile": dataset_profile,
         "get_data_quality": data_quality,
@@ -257,4 +291,7 @@ def build_agent_tool_registry() -> AgentToolRegistry:
         "generate_report": generate_report,
         "generate_review_report": lambda context: generate_report(context, "generate_review_report"),
         "explain_limitation": explain_limitation,
+        "query_business_metrics": query_business_metrics,
+        "list_business_anomalies": list_business_anomalies,
+        "get_business_evidence": get_business_evidence,
     })

@@ -328,7 +328,7 @@ class CrossBorderDatabase:
         output = []
         for row in rows:
             metadata = _json_object(row["metadata_json"])
-            if metadata.get("import_origin") != "web":
+            if metadata.get("import_origin") not in {"web", "adventureworks"}:
                 continue
             output.append({
                 "dataset_id": row["dataset_id"],

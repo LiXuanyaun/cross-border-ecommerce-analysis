@@ -12,6 +12,79 @@ export interface ApiEnvelope<T> {
   limitations: string[];
 }
 
+export type BusinessTopic = "advertising" | "returns" | "logistics";
+
+export interface BusinessDataset {
+  dataset_id: string;
+  name: string;
+  imported_at: string;
+  is_simulated: boolean;
+  source_label: string;
+}
+
+export interface BusinessMetric {
+  id: string;
+  label: string;
+  value: number | null;
+  format: "currency" | "integer" | "percent" | "decimal" | "days";
+  formula: string;
+  currency: string | null;
+  evidence_id: string;
+}
+
+export interface BusinessEvidence {
+  evidence_id: string;
+  metric_id: string;
+  metric: string;
+  value: number | null;
+  formula: string;
+  source_table: string;
+  period: { start: string; end: string };
+  comparison_period: { start: string; end: string } | null;
+  threshold: string | null;
+  sample_size: number;
+  record_keys: string[];
+  limitations: string[];
+}
+
+export interface BusinessAnomaly {
+  id: string;
+  rule_id: string;
+  rule_version: string;
+  title: string;
+  entity: string;
+  status: string;
+  current_value: number | null;
+  comparison_value: number | null;
+  change_rate: number | null;
+  threshold: string;
+  reason: string;
+  recommendation: string;
+  evidence_ids: string[];
+  limitations: string[];
+}
+
+export interface BusinessTopicData {
+  topic: BusinessTopic;
+  dataset_id: string;
+  scope_id: string;
+  period: { start: string; end: string };
+  filters: Record<string, string>;
+  filter_options: Record<string, string[]>;
+  data_source: { is_simulated: boolean; label: string; description: string; data_origin: string };
+  quality: { status: string; association_status: string; limitations: string[] };
+  metrics: BusinessMetric[];
+  trend: { title: string; grain: string; rows: Array<Record<string, string | number | null>>; series: string[] };
+  ranking: { title: string; dimension: string; rows: Array<Record<string, string | number | null>> };
+  distribution?: { title: string; rows: Array<Record<string, string | number | null>> } | null;
+  anomalies: BusinessAnomaly[];
+  causes: Array<{ anomaly_id: string; entity: string; explanation: string; evidence_ids: string[] }>;
+  actions: Array<{ anomaly_id: string; priority: string; title: string; threshold: string; evidence_ids: string[] }>;
+  evidence: BusinessEvidence[];
+  details: Array<Record<string, string | number | null>>;
+  tracking_exceptions?: Array<Record<string, string | number | null>> | null;
+}
+
 export interface Kpi {
   id?: string;
   label: string;
