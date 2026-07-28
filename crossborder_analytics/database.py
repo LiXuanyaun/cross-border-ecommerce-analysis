@@ -228,17 +228,17 @@ class CrossBorderDatabase:
         self.path = Path(path)
         self.store = CrossBorderDatasetStore(self.path)
 
-    def persist(self, context) -> StoredDataset:
+    def persist(self, context, dataset_id: str | None = None) -> StoredDataset:
         self._migrate_orders_schema()
         stored_context = replace(
             context,
             analysis_data=storage_frame(context),
             contract=ECOMMERCE_STORAGE_CONTRACT,
         )
-        stored = self.store.store_context(stored_context, "orders")
+        stored = self.store.store_context(stored_context, "orders", dataset_id=dataset_id)
         context.metadata.update({
             "database_path": str(self.path.resolve()),
-            "database_schema_version": 3,
+            "database_schema_version": 4,
             "dataset_id": stored.dataset_id,
             "stored_rows": stored.row_count,
             "storage_reused": stored.reused,

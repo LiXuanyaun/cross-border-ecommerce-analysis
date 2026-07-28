@@ -40,6 +40,12 @@ ECOMMERCE_CONTRACT = DatasetContract(
         FieldSpec("customer_age", dtype="integer", aliases=("客户年龄",)),
         FieldSpec("customer_gender", aliases=("客户性别",)),
         FieldSpec("currency", aliases=("币种", "货币", "currency_code")),
+        FieldSpec("sales_order_number", aliases=("SalesOrderNumber", "销售订单号")),
+        FieldSpec("sales_order_line_number", dtype="integer", aliases=("SalesOrderLineNumber", "销售订单行号")),
+        FieldSpec("source_product_key", aliases=("ProductKey",)),
+        FieldSpec("source_customer_key", aliases=("CustomerKey",)),
+        FieldSpec("source_currency_key", aliases=("CurrencyKey",)),
+        FieldSpec("source_sales_territory_key", aliases=("SalesTerritoryKey",)),
     ),
 )
 
