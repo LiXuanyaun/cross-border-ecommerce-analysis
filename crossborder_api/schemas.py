@@ -57,6 +57,77 @@ class ProviderStatus(BaseModel):
     message: str
 
 
+class BusinessDataset(BaseModel):
+    dataset_id: str
+    name: str
+    imported_at: str
+    is_simulated: bool
+    source_label: str
+
+
+class BusinessMetric(BaseModel):
+    id: str
+    label: str
+    value: float | int | None
+    format: Literal["currency", "integer", "percent", "decimal", "days"]
+    formula: str
+    currency: str | None = None
+    evidence_id: str
+
+
+class BusinessEvidence(BaseModel):
+    evidence_id: str
+    metric_id: str
+    metric: str
+    value: float | int | None
+    formula: str
+    source_table: str
+    period: dict[str, str]
+    comparison_period: dict[str, str] | None = None
+    threshold: str | None = None
+    sample_size: int
+    record_keys: list[str]
+    limitations: list[str]
+
+
+class BusinessAnomaly(BaseModel):
+    id: str
+    rule_id: str
+    rule_version: str
+    title: str
+    entity: str
+    status: str
+    current_value: float | int | None
+    comparison_value: float | int | None
+    change_rate: float | None
+    threshold: str
+    reason: str
+    recommendation: str
+    evidence_ids: list[str]
+    limitations: list[str]
+
+
+class BusinessTopicData(BaseModel):
+    topic: Literal["advertising", "returns", "logistics"]
+    dataset_id: str
+    scope_id: str
+    period: dict[str, str]
+    filters: dict[str, Any]
+    filter_options: dict[str, list[str]]
+    data_source: dict[str, Any]
+    quality: dict[str, Any]
+    metrics: list[BusinessMetric]
+    trend: dict[str, Any]
+    ranking: dict[str, Any]
+    anomalies: list[BusinessAnomaly]
+    causes: list[dict[str, Any]]
+    actions: list[dict[str, Any]]
+    evidence: list[BusinessEvidence]
+    details: list[dict[str, Any]]
+    distribution: dict[str, Any] | None = None
+    tracking_exceptions: list[dict[str, Any]] | None = None
+
+
 def safe_value(value: Any) -> Any:
     if hasattr(value, "to_dict"):
         return value.to_dict()

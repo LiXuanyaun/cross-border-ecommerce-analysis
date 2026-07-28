@@ -15,6 +15,7 @@ from crossborder_analytics.service import AnalysisService
 from crossborder_analytics.data_quality import assess_business_quality
 from crossborder_analytics.modules import amount_column
 from crossborder_analytics.multibusiness_import import MultiBusinessImportService
+from crossborder_analytics.multibusiness_analysis import MultiBusinessAnalysisService
 from .report_runtime import export_scoped_bundle
 from .agent_tools import build_agent_tool_registry
 from .services import AnalysisQueryService, DatasetService, DemoScenario, SCENARIOS, WorkItemService
@@ -115,6 +116,9 @@ class AnalyticsRuntime:
         self.multi_business_import_service = MultiBusinessImportService(
             self._service.database_path, self._service,
         )
+        self.multi_business_analysis_service = MultiBusinessAnalysisService(self._service.database_path)
+        from .multibusiness_presenter import MultiBusinessPresenter
+        self.multi_business_presenter = MultiBusinessPresenter(self.multi_business_analysis_service)
         from .presenters import OverviewPresenter, TopicPresenter
         self.overview_presenter = OverviewPresenter(self)
         self.topic_presenter = TopicPresenter(self)

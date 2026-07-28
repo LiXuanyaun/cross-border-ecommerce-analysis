@@ -26,7 +26,7 @@ def importer(tmp_path):
 
 def test_adventureworks_adapter_converts_headerless_pipe_sources_to_order_lines():
     result = AdventureWorksAdapter().load_orders(FIXTURE)
-    row = result.loaded.data.iloc[0]
+    row = result.loaded.data.loc[result.loaded.data.sales_order_number.eq("SO1")].iloc[0]
 
     assert row.record_id == "aw:SO1:1"
     assert row.order_id == "SO1"
@@ -53,7 +53,7 @@ def test_business_file_preview_identifies_type_grain_fields_and_simulation_label
     assert preview["business_key"] == ["return_id"]
     assert preview["is_simulated"] is True
     assert "refund_amount" in preview["columns"]
-    assert preview["field_preview"][0]["sales_order_number"] == "SO1"
+    assert {row["sales_order_number"] for row in preview["field_preview"]} == {"SO0", "SO1"}
     assert classify_business_file("FactInternetSales.csv")["grain"] == "one row per order line"
 
 
@@ -63,13 +63,13 @@ def test_eight_business_tables_import_with_foreign_keys_and_reimport_is_idempote
     second = service.import_directory(FIXTURE)
 
     assert first["status"] == "READY"
-    assert first["order_row_count"] == 1
-    assert first["inserted_rows"] == 10
+    assert first["order_row_count"] == 3
+    assert first["inserted_rows"] == 17
     assert set(first["association_rates"].values()) == {1.0}
     assert second["status"] == "READY"
     assert second["reused"] is True
     assert second["inserted_rows"] == 0
-    assert second["duplicate_rows"] == 10
+    assert second["duplicate_rows"] == 17
 
     with sqlite3.connect(database) as connection:
         counts = {
@@ -80,15 +80,15 @@ def test_eight_business_tables_import_with_foreign_keys_and_reimport_is_idempote
             "dim_campaign": 1,
             "dim_carrier": 1,
             "dim_return_reason": 1,
-            "fact_ad_performance_daily": 1,
-            "bridge_order_attribution": 1,
-            "fact_returns": 1,
-            "fact_shipments": 1,
-            "fact_tracking_events": 3,
+            "fact_ad_performance_daily": 2,
+            "bridge_order_attribution": 2,
+            "fact_returns": 2,
+            "fact_shipments": 2,
+            "fact_tracking_events": 6,
         }
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         assert connection.execute(
-            "SELECT data_origin, scenario_id, generator_version FROM fact_returns"
+            "SELECT data_origin, scenario_id, generator_version FROM fact_returns WHERE return_id='RET-1'"
         ).fetchone() == ("synthetic_extension", "SCN_RET_CLOTHING_SIZE_SPIKE", "1.0.0")
 
 

@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .app_state import agent, envelope, runtime
 from .runtime import ROOT
 from .routes import agent as agent_routes
-from .routes import analytics, core, datasets, imports, maintenance, reports
+from .routes import analytics, business, core, datasets, imports, maintenance, reports
 from .telemetry import log_event
 
 
@@ -47,7 +47,7 @@ async def request_log_middleware(request: Request, call_next):
 
 
 for router in (
-    core.router, analytics.router, datasets.router, imports.router,
+    core.router, analytics.router, business.router, datasets.router, imports.router,
     maintenance.router, agent_routes.router, reports.router,
 ):
     app.include_router(router)

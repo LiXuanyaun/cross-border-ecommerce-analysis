@@ -40,13 +40,16 @@ ECOMMERCE_CONTRACT = DatasetContract(
         FieldSpec("customer_age", dtype="integer", aliases=("客户年龄",)),
         FieldSpec("customer_gender", aliases=("客户性别",)),
         FieldSpec("currency", aliases=("币种", "货币", "currency_code")),
-        FieldSpec("sales_order_number", aliases=("SalesOrderNumber", "销售订单号")),
-        FieldSpec("sales_order_line_number", dtype="integer", aliases=("SalesOrderLineNumber", "销售订单行号")),
-        FieldSpec("source_product_key", aliases=("ProductKey",)),
-        FieldSpec("source_customer_key", aliases=("CustomerKey",)),
-        FieldSpec("source_currency_key", aliases=("CurrencyKey",)),
-        FieldSpec("source_sales_territory_key", aliases=("SalesTerritoryKey",)),
     ),
+)
+
+ADVENTUREWORKS_LINK_FIELDS = (
+    FieldSpec("sales_order_number", required=True, nullable=False, aliases=("SalesOrderNumber", "销售订单号")),
+    FieldSpec("sales_order_line_number", dtype="integer", required=True, nullable=False, aliases=("SalesOrderLineNumber", "销售订单行号")),
+    FieldSpec("source_product_key", aliases=("ProductKey",)),
+    FieldSpec("source_customer_key", aliases=("CustomerKey",)),
+    FieldSpec("source_currency_key", aliases=("CurrencyKey",)),
+    FieldSpec("source_sales_territory_key", aliases=("SalesTerritoryKey",)),
 )
 
 # Import preview needs to inspect duplicate order ids before the user confirms
@@ -61,6 +64,12 @@ ECOMMERCE_STORAGE_CONTRACT = DatasetContract(
     name="cross_border_order_records_v3",
     grain_key="record_id",
     fields=(FieldSpec("record_id", required=True, nullable=False),) + ECOMMERCE_CONTRACT.fields,
+)
+
+ADVENTUREWORKS_STORAGE_CONTRACT = DatasetContract(
+    name="adventureworks_order_lines_v4",
+    grain_key="record_id",
+    fields=(FieldSpec("record_id", required=True, nullable=False),) + ECOMMERCE_CONTRACT.fields + ADVENTUREWORKS_LINK_FIELDS,
 )
 
 

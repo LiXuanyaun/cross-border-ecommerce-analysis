@@ -16,7 +16,7 @@ from autoclean.analytics import (
 )
 from autoclean.analytics.storage import _json_value, _quote_identifier, _sqlite_type
 
-from .contract import ECOMMERCE_CONTRACT, ECOMMERCE_STORAGE_CONTRACT
+from .contract import ADVENTUREWORKS_LINK_FIELDS, ECOMMERCE_CONTRACT, ECOMMERCE_STORAGE_CONTRACT
 
 
 SQL_DIR = Path(__file__).resolve().parent / "sql"
@@ -27,8 +27,11 @@ DERIVED_FIELDS = tuple("{}_base".format(field) for field in AMOUNT_FIELDS) + (
     "fx_source",
 )
 CANONICAL_AMOUNT_FIELDS = ("gmv_amount", "gmv_amount_base")
-ORDER_COLUMNS = tuple(field.name for field in ECOMMERCE_CONTRACT.fields) + DERIVED_FIELDS + CANONICAL_AMOUNT_FIELDS
+BASE_ORDER_COLUMNS = tuple(field.name for field in ECOMMERCE_CONTRACT.fields) + DERIVED_FIELDS + CANONICAL_AMOUNT_FIELDS
+ADVENTUREWORKS_LINK_COLUMNS = tuple(field.name for field in ADVENTUREWORKS_LINK_FIELDS)
+ORDER_COLUMNS = BASE_ORDER_COLUMNS + ADVENTUREWORKS_LINK_COLUMNS
 LINEAGE_FIELDS = ("source_file_id", "source_row_number")
+BASE_ORDER_COLUMNS = ("record_id",) + BASE_ORDER_COLUMNS + LINEAGE_FIELDS
 ORDER_COLUMNS = ("record_id",) + ORDER_COLUMNS + LINEAGE_FIELDS
 
 
@@ -199,6 +202,8 @@ def _missing_series(index: pd.Index, field: str) -> pd.Series:
         return pd.Series(float("nan"), index=index, dtype="float64")
     if dtype == "integer":
         return pd.Series(pd.NA, index=index, dtype="Int64")
+    if field == "sales_order_line_number":
+        return pd.Series(pd.NA, index=index, dtype="Int64")
     if dtype == "boolean":
         return pd.Series(pd.NA, index=index, dtype="boolean")
     if dtype == "date" or field == "fx_rate_date":
@@ -217,10 +222,15 @@ def storage_frame(context) -> pd.DataFrame:
         source = "total_amount_base" if "total_amount_base" in frame else "total_amount"
         if source in frame:
             frame["gmv_amount_base"] = frame[source]
-    for field in ORDER_COLUMNS:
+    storage_columns = (
+        ORDER_COLUMNS
+        if any(field in frame.columns for field in ADVENTUREWORKS_LINK_COLUMNS)
+        else BASE_ORDER_COLUMNS
+    )
+    for field in storage_columns:
         if field not in frame:
             frame[field] = _missing_series(frame.index, field)
-    return frame.loc[:, ORDER_COLUMNS]
+    return frame.loc[:, storage_columns]
 
 
 class CrossBorderDatabase:

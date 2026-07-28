@@ -14,7 +14,7 @@ import sqlite3
 import pandas as pd
 
 from .adventureworks import AdventureWorksAdapter, SOURCE_SCHEMAS
-from .contract import ECOMMERCE_STORAGE_CONTRACT
+from .contract import ADVENTUREWORKS_STORAGE_CONTRACT
 from .database import CrossBorderDatabase
 from .multibusiness_schema import foreign_key_violations, migrate_multibusiness_schema
 
@@ -224,7 +224,7 @@ class MultiBusinessImportService:
             source_currency="USD",
             target_currency="USD",
             online_fx=False,
-            contract=ECOMMERCE_STORAGE_CONTRACT,
+            contract=ADVENTUREWORKS_STORAGE_CONTRACT,
         )
         context.metadata.update({
             "dataset_name": "AdventureWorks 多业务分析",
