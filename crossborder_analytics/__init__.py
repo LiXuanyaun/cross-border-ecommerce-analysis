@@ -6,7 +6,7 @@ from .phase2_models import (
     MetricDefinition, MetricSnapshot, ProductOpportunity, Recommendation,
 )
 
-__version__ = "3.1.0"
+__version__ = "3.1.1"
 __all__ = [
     "AnalysisArtifacts", "AnalysisRequest", "AnalysisService", "Anomaly",
     "ActionItem", "CrossBorderAnalysisBundle", "DiagnosisResult", "EvidenceBundle",

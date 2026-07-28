@@ -237,7 +237,7 @@ def test_event_period_requires_equal_explicit_windows_and_exports_manifest(tmp_p
     assert event_snapshots
     paths = export_bundle(bundle, tmp_path / "outputs")
     manifest = pd.read_json(paths["manifest"], typ="series")
-    assert manifest["version"] == "3.1.0"
+    assert manifest["version"] == "3.1.1"
     assert manifest["metric_definitions"]
     assert manifest["insights"]
     assert paths["excel"].exists() and paths["docx"].exists()

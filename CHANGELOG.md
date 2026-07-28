@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.1.1 - 2026-07-28
+
+### 架构
+
+- 拆分 FastAPI 路由模块，保留所有现有 `/api/v1` 路径。
+- 提取 DatasetService、AnalysisQueryService、WorkItemService、AgentContextBuilder、OverviewPresenter 和 TopicPresenter。
+- 按 feature 目录整理 React 页面实现，并保留 `pages/*` 兼容导出。
+- 新增架构、数据模型路线、导入和维护文档。
+
+### 验证
+
+- 后端测试、前端测试、前端构建、React E2E 和 10 万行 SQLite 性能基准通过。
+
 ## 3.1.0 - 2026-07-28
 
 ### 基线

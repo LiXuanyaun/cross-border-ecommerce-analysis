@@ -1,4 +1,4 @@
-# CrossBorder AI Analytics 3.1.0
+# CrossBorder AI Analytics 3.1.1
 
 面向跨境电商运营复盘的证据型经营分析平台。项目以 AutoClean 6.6 为非破坏性数据与质量底座，将规范化订单和版本化分析对象写入 SQLite，再由注册指标、异常规则、诊断、建议和受控 SQL 证据生成 Dashboard、Excel、Markdown、DOCX 和可审计 manifest。
 

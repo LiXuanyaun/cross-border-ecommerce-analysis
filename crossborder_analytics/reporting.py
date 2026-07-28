@@ -683,7 +683,7 @@ def export_bundle(
     scope_id = bundle.metadata.get("scope_id")
     manifest = {
         "project": "CrossBorder AI Analytics",
-        "version": "3.1.0",
+        "version": "3.1.1",
         "generated_at": bundle.generated_at,
         "scope_id": scope_id,
         "analysis_request": bundle.metadata.get("analysis_request", {}),

@@ -15,7 +15,7 @@ from .routes import analytics, core, datasets, imports, maintenance, reports
 from .telemetry import log_event
 
 
-app = FastAPI(title="CrossBorder AI Analytics API", version="3.1.0")
+app = FastAPI(title="CrossBorder AI Analytics API", version="3.1.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
