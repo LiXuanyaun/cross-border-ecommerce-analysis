@@ -7,8 +7,6 @@ import {
   Expand,
   Link2,
   LoaderCircle,
-  Mic,
-  Paperclip,
   Plus,
   Send,
   Sparkles,
@@ -26,7 +24,7 @@ import {
   Skeleton,
   cx,
 } from "../components/ui";
-import { api } from "../lib/api";
+import { api, queryString } from "../lib/api";
 import { cn } from "../lib/format";
 import { useAppState } from "../state/app";
 import type {
@@ -47,16 +45,36 @@ interface ProviderStatus {
   message: string;
 }
 interface AgentEvent {
-  type: "stage" | "tool" | "warning" | "result" | "error";
+  type: "stage" | "plan" | "tool" | "warning" | "result" | "error";
   payload: Record<string, unknown>;
 }
+interface AgentPlanStep {
+  step_id: string;
+  title: string;
+  goal: string;
+  tools: string[];
+  depends_on: string[];
+  status: string;
+}
+interface ToolObservation {
+  tool: string;
+  status: string;
+  payload: Record<string, unknown>;
+  evidence_ids: string[];
+  message?: string;
+  plan_step_id?: string;
+  plan_step?: string;
+}
 interface AnalysisResult {
+  status?: string;
   answer: string;
   analysis: {
     question: string;
     dataset: { dataset_id: string; name: string };
     period: { start: string; end: string; type: string };
     tools: string[];
+    agent_plan: AgentPlanStep[];
+    tool_observations?: ToolObservation[];
     overview: OverviewData;
     quality: Record<string, unknown>;
     insights: Array<Record<string, unknown>>;
@@ -74,15 +92,20 @@ const toolLabels: Record<string, string> = {
   get_dataset_profile: "读取数据范围",
   get_data_quality: "校验数据质量",
   query_metrics: "计算注册指标",
+  get_metric: "读取关键指标",
+  compare_periods: "比较周期",
   list_anomalies: "识别指标异常",
   get_diagnosis: "拆解驱动因素",
   get_evidence: "构建业务证据",
+  create_task: "生成任务草稿",
   get_recommendations: "生成受控行动",
+  generate_report: "生成报告摘要",
   generate_review_report: "生成经营报告",
+  explain_limitation: "说明分析边界",
 };
 
 export function AiAnalystPage() {
-  const { datasetId } = useAppState();
+  const { datasetId, start, end } = useAppState();
   const [sessionId, setSessionId] = useState("");
   const [question, setQuestion] = useState(
     "分析最近一个完整周期中最值得关注的经营问题，并给出证据与建议。",
@@ -134,6 +157,8 @@ export function AiAnalystPage() {
       const payload: AgentRunRequest = {
         question: current,
         dataset_id: datasetId,
+        start,
+        end,
       };
       const response = await api<{ run_id: string }>(
         `/agent/sessions/${sessionId}/runs`,
@@ -177,6 +202,7 @@ export function AiAnalystPage() {
       setRunning(false);
     }
   };
+  const reportQuery = queryString({ start, end, scope_id: result?.scope_id });
   return (
     <div className="page-enter p-4 md:p-6">
       <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
@@ -193,8 +219,8 @@ export function AiAnalystPage() {
           importing={importConfig.isPending}
         />
       </div>
-      <div className="grid min-h-[calc(100vh-150px)] grid-cols-1 gap-4 2xl:grid-cols-[420px_minmax(0,1fr)]">
-        <Card className="flex min-h-[720px] flex-col overflow-hidden">
+      <div className="grid grid-cols-1 gap-4 xl:h-[calc(100vh-150px)] xl:min-h-[620px] xl:grid-cols-[420px_minmax(0,1fr)]">
+        <Card className="flex h-[min(720px,calc(100vh-150px))] min-h-[560px] flex-col overflow-hidden xl:h-full xl:min-h-0">
           <div className="flex h-14 items-center justify-between border-b border-line px-4">
             <h2 className="text-sm font-semibold">对话</h2>
             <Button
@@ -211,7 +237,7 @@ export function AiAnalystPage() {
               新建分析
             </Button>
           </div>
-          <div className="scrollbar-thin flex-1 space-y-4 overflow-y-auto p-4">
+          <div className="scrollbar-thin min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
             {messages.map((message, index) => (
               <ChatMessage key={index} {...message} />
             ))}
@@ -236,27 +262,10 @@ export function AiAnalystPage() {
                   }
                 }}
                 rows={3}
-                className="w-full resize-none text-sm leading-6 outline-none"
+                className="max-h-32 w-full resize-none overflow-y-auto text-sm leading-6 outline-none"
                 placeholder="请输入你的问题，支持自然语言提问..."
               />
-              <div className="mt-2 flex items-center justify-between">
-                <div className="flex gap-1 text-muted">
-                  <Button
-                    variant="ghost"
-                    className="h-8 w-8 p-0"
-                    aria-label="语音输入"
-                  >
-                    <Mic size={16} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className="h-8 w-8 p-0"
-                    aria-label="附加文件"
-                    disabled
-                  >
-                    <Paperclip size={16} />
-                  </Button>
-                </div>
+              <div className="mt-2 flex items-center justify-end">
                 <Button
                   className="h-8 w-8 p-0"
                   disabled={!sessionId || !question.trim() || running}
@@ -282,6 +291,7 @@ export function AiAnalystPage() {
           tab={resultTab}
           setTab={setResultTab}
           datasetId={datasetId}
+          reportQuery={reportQuery}
         />
       </div>
     </div>
@@ -330,10 +340,10 @@ function ChatMessage({ role, content }: { role: string; content: string }) {
       </div>
       <div
         className={cx(
-          "max-w-[88%] rounded-lg px-3 py-2 text-sm leading-6 whitespace-pre-wrap",
+          "max-w-[88%] break-words rounded-lg px-3 py-2 text-sm leading-6 whitespace-pre-wrap",
           role === "user"
-            ? "bg-[#e8f0ff] text-ink"
-            : "border border-line bg-white text-[#344054]",
+            ? "max-h-48 overflow-y-auto bg-[#e8f0ff] text-ink"
+            : "scrollbar-thin max-h-[360px] overflow-y-auto border border-line bg-white text-[#344054]",
         )}
       >
         {content}
@@ -350,6 +360,10 @@ function AnalysisProgress({ events }: { events: AgentEvent[] }) {
       .map((item) => [String(item.payload.stage), String(item.payload.status)]),
   );
   const tools = events.filter((item) => item.type === "tool");
+  const planEvent = [...events].reverse().find((item) => item.type === "plan");
+  const planSteps = Array.isArray(planEvent?.payload.steps)
+    ? (planEvent?.payload.steps as AgentPlanStep[])
+    : [];
   return (
     <div className="ml-10 space-y-3 rounded-panel border border-line p-3">
       <p className="text-xs font-semibold">分析进度</p>
@@ -372,6 +386,24 @@ function AnalysisProgress({ events }: { events: AgentEvent[] }) {
           )}
         </div>
       ))}
+      {planSteps.length > 0 && (
+        <div className="border-t border-line pt-3">
+          <p className="mb-2 text-xs font-semibold">执行计划</p>
+          <div className="space-y-2">
+            {planSteps.map((step) => (
+              <div className="rounded-md bg-[#f8fafc] p-2 text-xs" key={step.step_id}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-ink">{step.title}</span>
+                  <Badge tone={step.status === "COMPLETED" ? "green" : "blue"}>
+                    {step.status === "COMPLETED" ? "已完成" : "待执行"}
+                  </Badge>
+                </div>
+                <p className="mt-1 text-muted">{step.goal}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {tools.length > 0 && (
         <div className="border-t border-line pt-3">
           <p className="mb-2 flex items-center gap-2 text-xs font-semibold">
@@ -382,12 +414,14 @@ function AnalysisProgress({ events }: { events: AgentEvent[] }) {
             {tools.map((tool, index) => (
               <div
                 key={index}
-                className="flex items-center justify-between text-xs text-muted"
+                className="flex items-center justify-between gap-3 text-xs text-muted"
               >
-                <span>
-                  {toolLabels[cn(tool.payload.name)] ?? "执行受控分析工具"}
+                <span className="min-w-0 truncate">
+                  {eventToolName(tool)}
                 </span>
-                <Badge tone="green">已完成</Badge>
+                <Badge tone={statusTone(eventToolStatus(tool))}>
+                  {statusLabel(eventToolStatus(tool))}
+                </Badge>
               </div>
             ))}
           </div>
@@ -403,12 +437,14 @@ function AnalysisResultPanel({
   tab,
   setTab,
   datasetId,
+  reportQuery,
 }: {
   result: AnalysisResult | null;
   running: boolean;
   tab: string;
   setTab: (value: string) => void;
   datasetId: string;
+  reportQuery: string;
 }) {
   const tabs = ["概览", "详细分析", "对象排名", "证据明细", "报告预览"];
   const brief = result?.analysis.decision_brief;
@@ -421,8 +457,8 @@ function AnalysisResultPanel({
     brief?.cases[0];
   if (!result && !running)
     return (
-      <Card className="min-h-[720px]">
-        <div className="flex h-full min-h-[720px] flex-col items-center justify-center p-8 text-center">
+      <Card className="flex h-[min(720px,calc(100vh-150px))] min-h-[560px] flex-col xl:h-full xl:min-h-0">
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center p-8 text-center">
           <div className="grid h-14 w-14 place-items-center rounded-xl bg-[#edf4ff] text-brand">
             <Sparkles size={27} />
           </div>
@@ -435,7 +471,7 @@ function AnalysisResultPanel({
     );
   if (running && !result)
     return (
-      <Card className="min-h-[720px] p-5">
+      <Card className="h-[min(720px,calc(100vh-150px))] min-h-[560px] overflow-hidden p-5 xl:h-full xl:min-h-0">
         <div className="flex items-center gap-3">
           <LoaderCircle className="animate-spin text-brand" />
           <div>
@@ -459,14 +495,14 @@ function AnalysisResultPanel({
       </Card>
     );
   return (
-    <Card className="min-h-[720px] overflow-hidden">
+    <Card className="flex h-[min(720px,calc(100vh-150px))] min-h-[560px] flex-col overflow-hidden xl:h-full xl:min-h-0">
       <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-line px-4">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold">分析结果</h2>
           <Badge tone="green">分析完成</Badge>
         </div>
         <div className="flex gap-2">
-          <a href={`/api/v1/reports/${datasetId}/docx`}>
+          <a href={`/api/v1/reports/${datasetId}/docx${reportQuery}`}>
             <Button variant="secondary" className="h-8">
               <Download size={15} />
               导出报告
@@ -493,7 +529,7 @@ function AnalysisResultPanel({
           </button>
         ))}
       </div>
-      <div className="p-4">
+      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto p-4">
         {tab === "概览" && (
           <ResultOverview
             result={result!}
@@ -530,10 +566,37 @@ function ResultOverview({
 }) {
   const data = result.analysis.overview;
   const brief = result.analysis.decision_brief;
+  const observations = result.analysis.tool_observations ?? [];
   return (
     <div className="space-y-4">
+      <AnswerPanel result={result} observations={observations} />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <PlanTraceCard
+          plan={result.analysis.agent_plan}
+          observations={observations}
+        />
+        <RunEvidenceCard brief={brief} selectedCase={selectedCase} />
+      </div>
+      {brief.status === "SUCCESS" && selectedCase ? (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
+          <KeyFindingsCard
+            brief={brief}
+            selectedCaseId={selectedCaseId}
+            onSelectCase={onSelectCase}
+          />
+          <DriversCard item={selectedCase} />
+          <EvidenceSummaryCard item={selectedCase} />
+          <ActionsCard item={selectedCase} />
+        </div>
+      ) : (
+        <div className="rounded-md border border-line bg-white p-4">
+          <p className="text-sm text-muted">
+            {brief.message || "当前数据不足，无法生成该分析。"}
+          </p>
+        </div>
+      )}
       <div>
-        <h3 className="text-sm font-semibold">核心指标概览</h3>
+        <h3 className="text-sm font-semibold">指标上下文</h3>
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {data.kpis.map((metric) => (
             <MetricCard key={metric.label} metric={metric} />
@@ -549,28 +612,190 @@ function ResultOverview({
           compact
         />
       </div>
+      {brief.unavailable_metrics.length > 0 && (
+        <div className="rounded-md border border-[#b2ccff] bg-[#eff6ff] px-4 py-3 text-xs text-[#175cd3]">
+          {brief.unavailable_metrics.map((item) => item.metric).join("、")}
+          ：当前数据不足，无法生成对应分析。所有建议仅基于已展示的注册指标与业务证据。
+        </div>
+      )}
+    </div>
+  );
+}
+
+type BadgeTone = "neutral" | "blue" | "green" | "orange" | "red";
+
+function statusTone(status?: string): BadgeTone {
+  const normalized = (status ?? "").toUpperCase();
+  if (normalized === "SUCCESS" || normalized === "COMPLETED") return "green";
+  if (normalized === "PARTIAL" || normalized === "RUNNING") return "orange";
+  if (normalized === "FAILED" || normalized === "FATAL") return "red";
+  if (normalized === "SKIPPED" || normalized === "PENDING") return "neutral";
+  return "blue";
+}
+
+function statusLabel(status?: string) {
+  const normalized = (status ?? "").toUpperCase();
+  if (normalized === "SUCCESS" || normalized === "COMPLETED") return "已完成";
+  if (normalized === "PARTIAL") return "部分完成";
+  if (normalized === "RUNNING") return "执行中";
+  if (normalized === "SKIPPED") return "已跳过";
+  if (normalized === "PENDING") return "待执行";
+  if (normalized === "FAILED" || normalized === "FATAL") return "失败";
+  return status || "未知";
+}
+
+function toolName(observation: ToolObservation) {
+  return toolLabels[cn(observation.payload.name ?? observation.tool)] ?? observation.tool;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function eventToolName(event: AgentEvent) {
+  const nested = objectValue(event.payload.payload);
+  const key = cn(nested.name ?? event.payload.tool);
+  return toolLabels[key] ?? key;
+}
+
+function eventToolStatus(event: AgentEvent) {
+  return cn(event.payload.status);
+}
+
+function AnswerPanel({
+  result,
+  observations,
+}: {
+  result: AnalysisResult;
+  observations: ToolObservation[];
+}) {
+  const evidenceCount = new Set(
+    observations.flatMap((item) => item.evidence_ids ?? []),
+  ).size;
+  return (
+    <div className="rounded-md border border-line bg-white">
+      <div className="border-b border-line px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">本轮回答</h3>
+          <div className="flex flex-wrap gap-2">
+            <Badge tone={statusTone(result.status)}>{statusLabel(result.status)}</Badge>
+            <Badge tone="blue">{observations.length} 个工具</Badge>
+            <Badge tone={evidenceCount > 0 ? "green" : "neutral"}>
+              {evidenceCount} 条证据
+            </Badge>
+          </div>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-muted">
+          问题：{result.analysis.question}
+        </p>
+      </div>
+      <div className="scrollbar-thin max-h-[320px] overflow-y-auto px-4 py-3">
+        <p className="whitespace-pre-wrap break-words text-sm leading-7 text-[#344054]">
+          {result.answer}
+        </p>
+      </div>
+      <div className="border-t border-line px-4 py-2 text-xs text-muted">
+        数据集：{result.analysis.dataset.name} · 周期：
+        {result.analysis.period.start} 至 {result.analysis.period.end}
+      </div>
+    </div>
+  );
+}
+
+function PlanTraceCard({
+  plan,
+  observations,
+}: {
+  plan: AgentPlanStep[];
+  observations: ToolObservation[];
+}) {
+  return (
+    <div className="rounded-md border border-line bg-white p-4">
+      <h3 className="text-sm font-semibold">本轮调用轨迹</h3>
+      <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="space-y-2">
+          {plan.length ? (
+            plan.map((step) => (
+              <div className="rounded-md bg-[#f8fafc] p-3 text-xs" key={step.step_id}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-medium text-ink">{step.title}</span>
+                  <Badge tone={statusTone(step.status)}>{statusLabel(step.status)}</Badge>
+                </div>
+                <p className="mt-1 leading-5 text-muted">{step.goal}</p>
+              </div>
+            ))
+          ) : (
+            <p className="text-xs text-muted">本轮未返回执行计划。</p>
+          )}
+        </div>
+        <div className="scrollbar-thin max-h-72 space-y-2 overflow-y-auto pr-1">
+          {observations.length ? (
+            observations.map((item, index) => (
+              <div
+                className="rounded-md border border-line px-3 py-2 text-xs"
+                key={`${item.tool}-${index}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate font-medium">{toolName(item)}</span>
+                  <Badge tone={statusTone(item.status)}>{statusLabel(item.status)}</Badge>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-2 text-muted">
+                  {item.plan_step && <span>{item.plan_step}</span>}
+                  <span>证据 {item.evidence_ids?.length ?? 0}</span>
+                </div>
+                {item.message && (
+                  <p className="mt-1 leading-5 text-muted">{item.message}</p>
+                )}
+              </div>
+            ))
+          ) : (
+            <p className="text-xs text-muted">本轮未返回工具观察。</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RunEvidenceCard({
+  brief,
+  selectedCase,
+}: {
+  brief: DecisionBrief;
+  selectedCase?: DecisionCase;
+}) {
+  const evidenceRows = selectedCase?.evidence ?? [];
+  return (
+    <div className="rounded-md border border-line bg-white p-4">
+      <h3 className="text-sm font-semibold">本轮证据摘要</h3>
       {brief.status === "SUCCESS" && selectedCase ? (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-4">
-          <KeyFindingsCard
-            brief={brief}
-            selectedCaseId={selectedCaseId}
-            onSelectCase={onSelectCase}
-          />
-          <DriversCard item={selectedCase} />
-          <EvidenceSummaryCard item={selectedCase} />
-          <ActionsCard item={selectedCase} />
+        <div className="mt-3 space-y-3">
+          <p className="text-sm leading-6 text-[#475467]">
+            {selectedCase.finding.summary}
+          </p>
+          <div className="space-y-2">
+            {evidenceRows.slice(0, 3).map((row) => (
+              <div className="rounded-md bg-[#f8fafc] p-2 text-xs" key={`${row.metric_id}-${row.period_start}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-ink">{row.metric}</span>
+                  <Badge tone="green">可复算</Badge>
+                </div>
+                <p className="mt-1 text-muted">
+                  当前 {formatDecisionValue(row.current_value, row.unit)} · 对比{" "}
+                  {formatDecisionValue(row.comparison_value, row.unit)} · 变化{" "}
+                  {formatRatio(row.change_rate)}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       ) : (
-        <Card className="p-4">
-          <p className="text-sm text-muted">
-            {brief.message || "当前数据不足，无法生成该分析。"}
-          </p>
-        </Card>
+        <p className="mt-3 text-sm text-muted">
+          {brief.message || "当前数据不足，无法生成该分析。"}
+        </p>
       )}
-      <div className="rounded-md border border-[#b2ccff] bg-[#eff6ff] px-4 py-3 text-xs text-[#175cd3]">
-        {brief.unavailable_metrics.map((item) => item.metric).join("、")}
-        ：当前数据不足，无法生成对应分析。所有建议仅基于已展示的注册指标与业务证据。
-      </div>
     </div>
   );
 }

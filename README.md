@@ -1,8 +1,8 @@
-# CrossBorder AI Analytics 3.0
+# CrossBorder AI Analytics 3.1.0
 
 面向跨境电商运营复盘的证据型经营分析平台。项目以 AutoClean 6.6 为非破坏性数据与质量底座，将规范化订单和版本化分析对象写入 SQLite，再由注册指标、异常规则、诊断、建议和受控 SQL 证据生成 Dashboard、Excel、Markdown、DOCX 和可审计 manifest。
 
-3.0 新增基于 React、TypeScript、TailwindCSS 与 FastAPI 的企业级 Web 界面。原 Streamlit `app.py` 继续保留，用于业务口径对照和兼容运行。
+3.1 迭代在 React、TypeScript、TailwindCSS 与 FastAPI 的 Web 界面上补齐真实导入、统一指标规则链、任务闭环、同口径报告、受控 Agent 和性能门禁。原 Streamlit `app.py` 继续保留，用于业务口径对照和兼容运行。
 
 ## 核心约束
 
@@ -42,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_web.ps1
 
 访问 `http://127.0.0.1:8000`。默认使用 `demo` 模式：样例数据可筛选、分析和生成临时报告，但不能上传文件或修改共享任务。
 
-FastAPI 的 OpenAPI Schema 位于 `/openapi.json`。后端契约调整后，在服务运行期间执行 `cd frontend; npm run generate:api` 可刷新 `src/generated/api.ts`，业务组件继续通过页面级 DTO 封装使用这些接口。
+FastAPI 的 OpenAPI Schema 位于 `/openapi.json`。后端关键响应已经挂载基础 response model；后端契约调整后，在服务运行期间执行 `cd frontend; npm run generate:api` 可刷新 `src/generated/api.ts`，业务组件继续通过页面级 DTO 封装使用这些接口。
 
 本地私有模式允许从 AI 分析师页面一键读取当前 CC Switch Codex provider：
 
@@ -64,9 +64,9 @@ streamlit run app.py
 
 “市场增长”页面按 GMV（成交总额）增长、订单、客单价、利润率、退货率、SKU 集中度、样本和质量区分健康增长、风险增长、稳定、收缩、低价值、样本不足与数据不足；“产品机会”页面在原有经营分类之外识别扩量、扩市场、客户渗透、组合销售、利润修复、高风险增长和观察机会。两页均支持固定矩阵、局部筛选、详情和当前清单下载。
 
-“导出”页面可选择摘要版或完整版、整体或指定市场/品类范围、是否附带行动明细，以及 DOCX/Excel 格式。导出设置不重新计算数据；Excel 同时保留完整指标与证据审计表。
+“导出”页面可选择摘要版或完整版、整体或指定市场/品类范围、是否附带行动明细，以及 DOCX/Excel 格式。Web 报告接口继承当前日期、市场和品类筛选，并使用同一 `scope_id` 重新生成报告；Excel 同时保留完整指标与证据审计表。
 
-Phase 2 新增三个工作区：“风险中心”按 P0-P3 管理异常，“洞察中心”把指标变化、驱动贡献、行动边界和证据串在同一审计轨道，“数据健康中心”展示 A-D 可信度、字段健康、分析能力和补数路线。所有工作区、CLI 和报告读取同一批持久化对象。
+Phase 2 新增三个工作区：“风险中心”按 P0-P3 管理异常，“洞察中心”把指标变化、驱动贡献、行动边界和证据串在同一审计轨道，“数据健康中心”展示 A-D 可信度、字段健康、分析能力和补数路线。任务状态固定为 `TODO`、`IN_PROGRESS`、`COMPLETED`、`REVIEWED`、`CLOSED`，并记录负责人、截止日期、处理结果、复盘结论和关闭信息。所有工作区、CLI 和报告读取同一批持久化对象。
 
 Dashboard 所有 Plotly 图表使用同一套响应式布局：时间轴按周期数量调整角度和刻度密度，中文分类标签自动换行，水平图和热力图按内容增加高度，标题、图例、坐标轴及色条启用自动边距。报告中的 Matplotlib 图片使用相同中文字体回退和安全画布边距。
 
@@ -108,6 +108,9 @@ Excel 在原有业务 Sheet 之外增加 `metric_definitions`、`metric_snapshot
 
 ```powershell
 python -m pytest
+cd frontend
+npm test
+npm run build
 ```
 
 测试覆盖样例指标基线、部分月份、缺少可选字段、重复订单、历史汇率、RFM、国家优先/区域回退、市场品类占比、策略规则、商品品类冲突、商品详情和四类导出。
@@ -117,6 +120,8 @@ SQL 数据层另外覆盖版本幂等、筛选参数、失败回滚、查询日�
 ```powershell
 python .\scripts\benchmark_sqlite.py
 ```
+
+GitHub Actions 工作流位于 `.github/workflows/v31-ci.yml`，覆盖 Python 回归、前端测试、前端构建、100,000 行性能门禁和 Docker health smoke test。
 
 ### 浏览器自动化验收
 
@@ -148,9 +153,11 @@ python -m pytest tests\test_sidebar_browser.py
 ```text
 React SPA
   -> FastAPI /api/v1
-  -> AnalysisService / AnalysisRequest
-  -> SQLite + 受控 SQL
-  -> 指标、异常、诊断、建议、证据、报告
+  -> AnalyticsRuntime（请求编排与页面投影）
+  -> AnalysisService / AnalysisRequest（单一分析入口）
+  -> SQLite + 受控 SQL + ArtifactStore
+  -> MetricSnapshot -> Anomaly -> Diagnosis -> Recommendation -> Insight / Opportunity / ActionItem
+  -> Report Runtime / Task Lifecycle / Agent Context
 ```
 
 一级导航固定为经营总览、专题分析、数据中心和 AI 分析师。Agent 只能调用注册的指标、异常、诊断、建议、证据和报告工具，不开放任意 SQL。
@@ -170,11 +177,14 @@ docker run --rm -p 8000:8000 `
 
 ## 当前边界
 
-MVP 假设一行一订单，当前只开放预定义、参数化 SQL，不提供任意 SQL 控制台。公开演示模式不调用真实模型；真实 Agent 首先作为本地私有能力交付。多租户权限、趋势预测、多店铺/API 实时接入不在本期范围。
+当前只开放预定义、参数化 SQL，不提供任意 SQL 控制台。公开演示模式不调用真实模型；真实 Agent 首先作为本地私有能力交付，输出状态覆盖 `SUCCESS`、`PARTIAL`、`SKIPPED`、`FAILED`、`FATAL`。多租户权限、趋势预测、多店铺/API 实时接入不在本期范围。
 
 ## 项目复盘与路线图
 
 今日交付总结、可复用工程经验、当前缺点和 P0-P3 优化计划见：
 
+- [CrossBorder v3.1 产品化与可靠性 PRD](docs/PRD_V3.1.md)
+- [v3.1 工程实施 Backlog](docs/V3.1_IMPLEMENTATION_BACKLOG.md)
+- [v3.1 试点计划](docs/V3.1_PILOT_PLAN.md)
 - [阶段总结与工程化路线图](docs/PROJECT_REVIEW_2026-07-16.md)
 - [今日总结、反思与优化](docs/DAILY_RETROSPECTIVE_2026-07-16.md)

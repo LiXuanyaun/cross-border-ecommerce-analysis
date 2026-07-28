@@ -20,6 +20,8 @@ def safe_divide(numerator, denominator, default=np.nan):
 
 
 def amount_column(frame: pd.DataFrame, field: str = "total_amount") -> str:
+    if field == "total_amount" and "gmv_amount_base" in frame.columns:
+        return "gmv_amount_base"
     base = field + "_base"
     return base if base in frame.columns else field
 
@@ -226,7 +228,9 @@ class ProductModule:
                 product[column] = pd.NA
         if "category_count" not in product:
             product["category_count"] = 0
-        if "category" in frame:
+        if self.repository and "category" in product:
+            product = product.rename(columns={"category": "primary_category"})
+        elif "category" in frame:
             category_counts = (
                 frame.assign(category=frame["category"].astype("string").str.strip().replace("", pd.NA))
                 .dropna(subset=["category"])
@@ -539,16 +543,20 @@ class ReturnModule:
         }, evidence, message=message)
 
 
-def build_modules(repository=None):
-    return [
-        OverviewModule(repository),
-        SalesModule(repository),
-        ProductModule(repository),
-        CustomerModule(repository),
-        RegionModule(repository),
-        MarketCategoryModule(repository),
-        ReturnModule(repository),
-    ]
+def build_modules(repository=None, topic: str | None = None):
+    module_types = {
+        "market": (OverviewModule, SalesModule, RegionModule),
+        "product": (OverviewModule, SalesModule, ProductModule),
+        "customer": (OverviewModule, SalesModule, CustomerModule),
+        "profit": (OverviewModule, SalesModule, ProductModule),
+        "returns": (OverviewModule, SalesModule, ProductModule),
+    }.get(topic)
+    if module_types is None:
+        module_types = (
+            OverviewModule, SalesModule, ProductModule, CustomerModule,
+            RegionModule, MarketCategoryModule, ReturnModule,
+        )
+    return [module_type(repository) for module_type in module_types]
 
 
 ALL_MODULES = build_modules()

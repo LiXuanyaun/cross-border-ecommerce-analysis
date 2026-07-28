@@ -51,10 +51,9 @@ class ActionType(CodeEnum):
 class WorkItemStatus(CodeEnum):
     TODO = "TODO"
     IN_PROGRESS = "IN_PROGRESS"
-    REVIEW = "REVIEW"
     COMPLETED = "COMPLETED"
-    DISMISSED = "DISMISSED"
-    WAITING_DATA = "WAITING_DATA"
+    REVIEWED = "REVIEWED"
+    CLOSED = "CLOSED"
 
 
 class MarketGrowthStatus(CodeEnum):
@@ -118,10 +117,18 @@ class AnalysisRequest(Serializable):
     period_end: Optional[str] = None
     comparison_start: Optional[str] = None
     comparison_end: Optional[str] = None
+    analysis_mode: str = "full"
+    topic: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.period_type not in {"month", "week", "event"}:
             raise ValueError("period_type must be month, week, or event")
+        if self.analysis_mode not in {"full", "topic"}:
+            raise ValueError("analysis_mode must be full or topic")
+        if self.analysis_mode == "topic" and self.topic not in {"market", "product", "customer", "profit", "returns"}:
+            raise ValueError("topic analysis requires a supported topic")
+        if self.analysis_mode == "full" and self.topic is not None:
+            raise ValueError("full analysis must not set topic")
         values = (self.period_start, self.period_end, self.comparison_start, self.comparison_end)
         if self.period_type == "event" and any(value is None for value in values):
             raise ValueError("event analysis requires an explicit event and comparison period")
@@ -379,7 +386,11 @@ class AnalysisWorkItem(Serializable):
     workflow_status: WorkItemStatus
     owner: str
     due_date: Optional[str]
-    resolution_note: str
+    result_note: str
+    review_result: str
+    close_reason: str
+    closed_by: str
+    closed_at: Optional[str]
     updated_at: str
 
 
@@ -593,18 +604,12 @@ class CrossBorderAnalysisBundle:
 
     @property
     def recommendations(self):
-        if self.artifacts.recommendations:
-            records = []
-            for item in self.artifacts.recommendations:
-                record = item.to_dict()
-                record.update({"title": item.rationale, "level": item.priority})
-                records.append(record)
-            return records
-        return self.legacy.recommendations
-
-    @recommendations.setter
-    def recommendations(self, value):
-        self.legacy.recommendations = value
+        records = []
+        for item in self.artifacts.recommendations:
+            record = item.to_dict()
+            record.update({"title": item.rationale, "level": item.priority})
+            records.append(record)
+        return records
 
     @property
     def evidence(self):

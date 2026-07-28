@@ -132,10 +132,25 @@ def test_exports_have_required_surfaces_and_provenance(tmp_path):
     assert any("商品分析" in text for text in headings)
     manifest = json.loads(paths["manifest"].read_text(encoding="utf-8"))
     assert manifest["source"]["source_sha256"] == source_hash
-    assert manifest["version"] == "2.5.0"
+    assert manifest["version"] == "3.1.0"
     assert manifest["storage"]["backend"] == "sql"
     assert manifest["storage"]["dataset_id"]
     assert manifest["storage"]["query_runs"]
     assert manifest["storage"]["product_detail_queries"]
     assert manifest["module_status"][0]["status"] in {"SUCCESS", "SKIPPED", "FAILED", "FATAL"}
     assert SAMPLE.read_bytes()
+
+
+def test_chinese_fields_and_boolean_values_are_normalized():
+    content = (
+        "订单号,下单日期,订单金额,是否退货\n"
+        "A1,2025-01-01,10,是\n"
+        "A2,2025-01-02,20,否\n"
+    ).encode("utf-8-sig")
+    service = AnalysisService(database_path=None, backend="pandas")
+    context = service.prepare(
+        content, filename="中文订单.csv", source_currency="CNY", target_currency="CNY"
+    )
+    assert not context.fatal_issues
+    assert context.field_mapping["returned"] == "是否退货"
+    assert context.analysis_data.returned.tolist() == [True, False]

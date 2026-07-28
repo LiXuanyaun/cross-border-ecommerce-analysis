@@ -21,16 +21,20 @@ from .phase2_utils import canonical_json, frame_digest, stable_id, utc_now
 
 
 SQL_PATH = Path(__file__).resolve().parent / "sql" / "metric_facts_v1.sql"
+MAX_LIFECYCLE_ASSESSMENTS = 1_000
 
 
 def build_scope_id(dataset_id: str, request: AnalysisRequest, currency: str) -> str:
+    request_payload = request.to_dict()
+    request_payload.pop("analysis_mode", None)
+    request_payload.pop("topic", None)
     versions = {
         "metrics": {item.metric_id: item.version for item in METRICS_CATALOG},
         "rules": {item.rule_id: item.version for item in ANOMALY_RULES},
         "recommendations": {item.recommendation_rule_id: item.version for item in RECOMMENDATION_RULES},
         "metric_query": sha256(SQL_PATH.read_bytes()).hexdigest(),
     }
-    return stable_id("scope", dataset_id, request.to_dict(), currency, versions)
+    return stable_id("scope", dataset_id, request_payload, currency, versions)
 
 
 def _pandas_facts(frame: pd.DataFrame) -> pd.DataFrame:
@@ -49,6 +53,10 @@ def _pandas_facts(frame: pd.DataFrame) -> pd.DataFrame:
     work["units"] = work["quantity"] if "quantity" in work else np.nan
     work["customer_id"] = work["customer_id"] if "customer_id" in work else pd.NA
     work["profit"] = work[profit] if profit else np.nan
+    for amount_field in ("cost_amount", "refund_amount", "ad_spend"):
+        work[amount_field] = work[amount_column(work, amount_field)] if amount_field in work else np.nan
+    work["inventory_available"] = pd.to_numeric(work["inventory_available"], errors="coerce") if "inventory_available" in work else np.nan
+    work["stockout_flag"] = work["stockout_flag"].fillna(False).astype(bool).astype(int) if "stockout_flag" in work else 0
     returned = work["returned"].fillna(False).astype(bool) if "returned" in work else pd.Series(False, index=work.index)
     work["returned_orders"] = returned.astype(int)
     work["returned_gmv"] = np.where(returned, work[amount], 0.0)
@@ -56,7 +64,8 @@ def _pandas_facts(frame: pd.DataFrame) -> pd.DataFrame:
     work["gmv"] = work[amount]
     return work[[
         "order_day", "market", "category", "sku", "order_id", "customer_id",
-        "orders", "gmv", "units", "profit", "returned_orders", "returned_gmv",
+        "orders", "gmv", "units", "profit", "cost_amount", "refund_amount", "ad_spend",
+        "inventory_available", "stockout_flag", "returned_orders", "returned_gmv",
     ]].reset_index(drop=True)
 
 
@@ -137,7 +146,7 @@ class MetricsEngine:
                     group_source = period_facts
                     if entity_type == "sku":
                         threshold = 10
-                        eligible = period_facts.groupby(column, dropna=False)["orders"].sum()
+                        eligible = period_facts.groupby(column, dropna=False)["order_id"].nunique()
                         eligible = eligible.loc[eligible.ge(threshold)].index
                         if len(eligible) == 0:
                             continue
@@ -169,7 +178,7 @@ class MetricsEngine:
                         snapshots.append(self._snapshot(
                             dataset_id, scope_id, definition, entity_type, entity_id, period_type,
                             period_start, period_end, complete, contribution, entity_gmv, total_gmv,
-                            int(group["orders"].sum()), currency, str(quality.quality_rating),
+                            int(group["order_id"].nunique()), currency, str(quality.quality_rating),
                             capability.get(definition.capability_gate, "UNSUPPORTED"), evidence_id,
                             calculated_at, (() if total_gmv else ("分母为零",)),
                         ))
@@ -197,14 +206,14 @@ class MetricsEngine:
             period_end=str(facts["order_day"].max().date()) if not facts.empty else "",
             executed_at=calculated_at, duration_ms=round(duration, 3), row_count=len(facts),
             result_digest=frame_digest(facts),
-            result_summary={"rows": len(facts), "orders": int(facts["orders"].sum()) if not facts.empty else 0, "gmv": float(facts["gmv"].sum()) if not facts.empty else 0.0},
+            result_summary={"rows": len(facts), "orders": int(facts["order_id"].nunique()) if not facts.empty else 0, "gmv": float(facts["gmv"].sum()) if not facts.empty else 0.0},
             limitations=("证据预览按日、市场、品类和 SKU 聚合",),
         )
         return snapshots, assessments, [evidence]
 
     @staticmethod
     def _aggregate(group: pd.DataFrame, available: set) -> Dict[str, tuple]:
-        orders = int(group["orders"].sum()) if not group.empty else 0
+        orders = int(group["order_id"].nunique()) if not group.empty else 0
         gmv = float(group["gmv"].sum()) if not group.empty else 0.0
         output = {
             "gmv": (gmv, gmv, None, orders, ()),
@@ -221,8 +230,30 @@ class MetricsEngine:
             profit = float(group["profit"].sum()) if not group.empty else 0.0
             output["profit"] = (profit, profit, None, orders, ())
             output["profit_margin"] = ((profit / gmv) if gmv else None, profit, gmv, orders, (() if gmv else ("分母为零",)))
+        if "cost_amount" in available:
+            cost = float(group["cost_amount"].sum()) if not group.empty else 0.0
+            output["cost_amount"] = (cost, cost, None, orders, ())
+        if "refund_amount" in available:
+            refund = float(group["refund_amount"].sum()) if not group.empty else 0.0
+            output["refund_amount"] = (refund, refund, None, orders, ())
+        if "ad_spend" in available:
+            ad_spend = float(group["ad_spend"].sum()) if not group.empty else 0.0
+            output["ad_spend"] = (ad_spend, ad_spend, None, orders, ())
+            output["roas"] = ((gmv / ad_spend) if ad_spend else None, gmv, ad_spend, orders, (() if ad_spend else ("分母为零",)))
+        if {"profit_amount", "refund_amount", "ad_spend"} <= available:
+            profit = float(group["profit"].sum()) if not group.empty else 0.0
+            refund = float(group["refund_amount"].sum()) if not group.empty else 0.0
+            ad_spend = float(group["ad_spend"].sum()) if not group.empty else 0.0
+            net_profit = profit - refund - ad_spend
+            output["net_profit"] = (net_profit, profit, refund + ad_spend, orders, ())
+        if "inventory_available" in available:
+            inventory = float(group["inventory_available"].sum()) if not group.empty else 0.0
+            output["inventory_available"] = (inventory, inventory, None, orders, ())
+        if "stockout_flag" in available:
+            stockout_orders = float(group.loc[group["stockout_flag"].fillna(0).astype(int).gt(0), "order_id"].nunique()) if not group.empty else 0.0
+            output["stockout_rate"] = ((stockout_orders / orders) if orders else None, stockout_orders, float(orders), orders, (() if orders else ("分母为零",)))
         if "returned" in available:
-            returned = float(group["returned_orders"].sum()) if not group.empty else 0.0
+            returned = float(group.loc[group["returned_orders"].gt(0), "order_id"].nunique()) if not group.empty else 0.0
             output["return_rate"] = ((returned / orders) if orders else None, returned, float(orders), orders, (() if orders else ("分母为零",)))
         return output
 
@@ -340,6 +371,15 @@ class MetricsEngine:
         labels.loc[declining] = "衰退品"
         labels.loc[stats.age_days.le(30) & stats.cumulative_orders.ge(5)] = "新品"
         labels.loc[stats.latest_orders.lt(10) | stats.observed.lt(2)] = "低样本"
+        stats["lifecycle_label"] = labels.astype(str)
+        stats = (
+            stats.assign(low_sample=stats.lifecycle_label.eq("低样本"))
+            .sort_values(
+                ["low_sample", "latest_orders", "cumulative_orders"],
+                ascending=[True, False, False],
+            )
+            .head(MAX_LIFECYCLE_ASSESSMENTS)
+        )
         period_start, period_end = latest_start.date().isoformat(), latest_end.date().isoformat()
         def lifecycle_id(sku):
             payload = json.dumps(
@@ -354,5 +394,7 @@ class MetricsEngine:
                 period_end, str(label), int(latest_orders), (evidence_id,),
                 (() if label != "低样本" else ("样本不足，不强行分类",)),
             )
-            for sku, label, latest_orders in zip(stats.index, labels.array, stats.latest_orders.array)
+            for sku, label, latest_orders in zip(
+                stats.index, stats.lifecycle_label.array, stats.latest_orders.array,
+            )
         ]

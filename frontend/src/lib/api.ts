@@ -12,6 +12,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<ApiEnvel
   return response.json();
 }
 
+export async function apiForm<T>(path: string, form: FormData): Promise<ApiEnvelope<T>> {
+  const response = await fetch(`/api/v1${path}`, { method: "POST", body: form });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({ detail: "请求失败" }));
+    throw new Error(payload.detail ?? `请求失败（${response.status}）`);
+  }
+  return response.json();
+}
+
 export function queryString(values: Record<string, string | number | undefined | null>) {
   const params = new URLSearchParams();
   Object.entries(values).forEach(([key, value]) => {

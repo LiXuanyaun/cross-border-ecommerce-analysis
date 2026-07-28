@@ -77,12 +77,46 @@ def test_agent_answer_hides_internal_evidence_identifiers():
 
 
 def test_recommendation_request_cannot_skip_the_evidence_chain():
-    tools = _context()["tools"]
+    context = _context()
+    tools = context["tools"]
+    plan_titles = [step["title"] for step in context["agent_plan"]]
 
     assert tools.index("query_metrics") < tools.index("list_anomalies")
     assert tools.index("list_anomalies") < tools.index("get_diagnosis")
     assert tools.index("get_diagnosis") < tools.index("get_evidence")
     assert tools.index("get_evidence") < tools.index("get_recommendations")
+    assert plan_titles == [
+        "确认数据范围",
+        "读取经营指标",
+        "诊断异常驱动",
+        "生成行动草案",
+        "声明分析边界",
+    ]
+
+
+def test_agent_context_exposes_structured_tool_observations():
+    context = _context()
+    observations = {item["tool"]: item for item in context["tool_observations"]}
+
+    assert {
+        "get_dataset_profile",
+        "get_data_quality",
+        "query_metrics",
+        "get_metric",
+        "compare_periods",
+        "list_anomalies",
+        "get_diagnosis",
+        "get_evidence",
+        "create_task",
+        "get_recommendations",
+        "generate_review_report",
+        "explain_limitation",
+    } <= set(observations)
+    assert observations["create_task"]["status"] == "SKIPPED"
+    assert observations["generate_review_report"]["status"] == "SUCCESS"
+    assert observations["get_evidence"]["evidence_ids"]
+    assert observations["get_evidence"]["plan_step_id"] == "plan-3"
+    assert observations["get_recommendations"]["plan_step_id"] == "plan-4"
 
 
 def test_limitations_preserve_statements_and_only_prefix_missing_context():

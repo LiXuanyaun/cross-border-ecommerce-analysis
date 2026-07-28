@@ -1,6 +1,6 @@
 import type { components } from "./generated/api";
 
-export type ApiStatus = "SUCCESS" | "SKIPPED" | "FAILED" | "FATAL";
+export type ApiStatus = "SUCCESS" | "PARTIAL" | "SKIPPED" | "FAILED" | "FATAL";
 export type AgentSessionRequest = components["schemas"]["AgentSessionRequest"];
 export type AgentRunRequest = components["schemas"]["AgentRunRequest"];
 export type WorkItemPatch = components["schemas"]["WorkItemPatch"];
@@ -60,6 +60,12 @@ export interface OverviewTask {
   analysis_status: string;
   status: string;
   owner: string;
+  deadline: string | null;
+  result_note: string;
+  review_result: string;
+  close_reason: string;
+  closed_by: string;
+  closed_at: string | null;
   current_value: number | null;
   comparison_value: number | null;
   change_rate: number | null;

@@ -1,6 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import type { EChartsOption } from "echarts";
-import ReactECharts from "echarts-for-react";
 import {
   AlertTriangle,
   ArrowRight,
@@ -18,7 +16,8 @@ import {
   TrendingDown,
   TrendingUp,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { api, queryString } from "../lib/api";
 import type {
   Kpi,
@@ -42,6 +41,7 @@ import {
   Skeleton,
   cx,
 } from "../components/ui";
+import { EChart, type EChartsOption } from "../components/EChart";
 import { formatChange, formatValue } from "../lib/format";
 
 type DrawerState =
@@ -61,10 +61,9 @@ const chartColors = ["#1769ff", "#12b76a", "#f79009", "#7f56d9", "#e5484d", "#06
 const workflowLabels: Record<string, string> = {
   TODO: "待处理",
   IN_PROGRESS: "处理中",
-  REVIEW: "待复核",
   COMPLETED: "已完成",
-  DISMISSED: "已忽略",
-  WAITING_DATA: "等待数据",
+  REVIEWED: "已复盘",
+  CLOSED: "已关闭",
 };
 
 function dateText(period: OverviewPeriod) {
@@ -120,13 +119,14 @@ function priorityTone(priority: string): "red" | "orange" | "blue" | "green" | "
 
 function workflowTone(status: string): "red" | "orange" | "blue" | "green" | "neutral" {
   if (status === "COMPLETED") return "green";
-  if (status === "IN_PROGRESS" || status === "REVIEW") return "blue";
-  if (status === "WAITING_DATA") return "orange";
+  if (status === "IN_PROGRESS" || status === "REVIEWED") return "blue";
+  if (status === "CLOSED") return "orange";
   return "neutral";
 }
 
 export function OverviewPage() {
   const { datasetId, start, end } = useAppState();
+  const queryClient = useQueryClient();
   const [grain, setGrain] = useState<"day" | "week">("day");
   const [drawer, setDrawer] = useState<DrawerState>(null);
   const [insightTab, setInsightTab] = useState<"sustainability" | "history" | "evidence">("sustainability");
@@ -167,12 +167,43 @@ export function OverviewPage() {
           body: JSON.stringify({
             workflow_status: "IN_PROGRESS",
             owner: task.owner,
-            due_date: null,
-            resolution_note: "",
+            deadline: task.deadline ?? task.current_period?.end ?? data.current_period.end,
+            result_note: "",
+            review_result: "",
+            close_reason: "",
+            closed_by: "",
           }),
         });
+        await queryClient.invalidateQueries({ queryKey: ["overview", datasetId, start, end] });
       }
       setStatusOverrides((current) => ({ ...current, [task.id]: "IN_PROGRESS" }));
+    } finally {
+      setUpdatingTask(false);
+    }
+  };
+
+  const saveTask = async (task: OverviewTask, patch: Partial<OverviewTask>) => {
+    setUpdatingTask(true);
+    try {
+      if (envelope.meta.app_mode === "private") {
+        await api(`/work-items/${task.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            workflow_status: patch.status ?? task.status,
+            owner: patch.owner ?? task.owner,
+            deadline: patch.deadline ?? task.deadline,
+            result_note: patch.result_note ?? task.result_note,
+            review_result: patch.review_result ?? task.review_result,
+            close_reason: patch.close_reason ?? task.close_reason,
+            closed_by: patch.closed_by ?? task.closed_by,
+            closed_at: patch.closed_at ?? task.closed_at,
+          }),
+        });
+        await queryClient.invalidateQueries({ queryKey: ["overview", datasetId, start, end] });
+      }
+      if (patch.status) {
+        setStatusOverrides((current) => ({ ...current, [task.id]: patch.status! }));
+      }
     } finally {
       setUpdatingTask(false);
     }
@@ -258,6 +289,7 @@ export function OverviewPage() {
             setInsightTab={setInsightTab}
             setDrawer={setDrawer}
             markInProgress={markInProgress}
+            saveTask={saveTask}
             updatingTask={updatingTask}
             appMode={String(envelope.meta.app_mode ?? "demo")}
           />
@@ -320,7 +352,7 @@ function OverviewKpiCard({ metric }: { metric: Kpi }) {
         </div>
         </div>
         <div className="min-w-0">
-        <ReactECharts option={option} style={{ width: 108, height: 54 }} notMerge lazyUpdate />
+        <EChart option={option} style={{ width: 108, height: 54 }} notMerge lazyUpdate />
         <p className="mt-1 text-right text-[10px] text-[#98a2b3]">最近 {sparkline.length} 个完整月</p>
         </div>
       </div>
@@ -395,7 +427,7 @@ function OperatingTrend({ trend, methodology, grain, setGrain, onDetails }: { tr
         </div>
       </div>
       <MethodologyNote item={methodology} />
-      <ReactECharts option={option} style={{ height: 276 }} notMerge lazyUpdate />
+      <EChart option={option} style={{ height: 276 }} notMerge lazyUpdate />
     </Card>
   );
 }
@@ -446,7 +478,7 @@ function MarketPerformance({ markets, methodology, onDetails }: { markets: Overv
       <MethodologyNote item={methodology} />
       <div className="mt-2 grid grid-cols-[132px_minmax(0,1fr)] items-center gap-3">
         <div>
-          <ReactECharts option={option} style={{ height: 140 }} />
+          <EChart option={option} style={{ height: 140 }} />
           <p className="-mt-3 text-center text-[10px] text-muted">GMV 构成</p>
         </div>
         <div className="space-y-2.5">
@@ -486,7 +518,7 @@ function ProductPerformance({ categories, methodology, onDetails }: { categories
       <SectionTitle icon={Package} title="商品表现" action="查看详情" onAction={onDetails} />
       <MethodologyNote item={methodology} />
       <div className="mt-2 grid grid-cols-[132px_minmax(0,1fr)] items-center gap-3">
-        <ReactECharts option={option} style={{ height: 166 }} />
+        <EChart option={option} style={{ height: 166 }} />
         <div className="space-y-2">
           {categories.slice(0, 5).map((category, index) => (
             <div key={category.category} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 text-xs">
@@ -568,7 +600,7 @@ function drawerTitle(drawer: DrawerState) {
   return titles[drawer.type];
 }
 
-function DrawerContent({ drawer, data, grain, taskStatus, insightTab, setInsightTab, setDrawer, markInProgress, updatingTask, appMode }: {
+function DrawerContent({ drawer, data, grain, taskStatus, insightTab, setInsightTab, setDrawer, markInProgress, saveTask, updatingTask, appMode }: {
   drawer: Exclude<DrawerState, null>;
   data: OverviewData;
   grain: "day" | "week";
@@ -577,10 +609,11 @@ function DrawerContent({ drawer, data, grain, taskStatus, insightTab, setInsight
   setInsightTab: (tab: "sustainability" | "history" | "evidence") => void;
   setDrawer: (drawer: DrawerState) => void;
   markInProgress: (task: OverviewTask) => Promise<void>;
+  saveTask: (task: OverviewTask, patch: Partial<OverviewTask>) => Promise<void>;
   updatingTask: boolean;
   appMode: string;
 }) {
-  if (drawer.type === "task") return <TaskDetail task={drawer.task} status={taskStatus(drawer.task)} onProgress={() => markInProgress(drawer.task)} updating={updatingTask} appMode={appMode} />;
+  if (drawer.type === "task") return <TaskDetail task={drawer.task} status={taskStatus(drawer.task)} onProgress={() => markInProgress(drawer.task)} onSave={(patch) => saveTask(drawer.task, patch)} updating={updatingTask} appMode={appMode} />;
   if (drawer.type === "insight") return <InsightDetail insight={drawer.insight} tab={insightTab} setTab={setInsightTab} />;
   if (drawer.type === "opportunity") return <OpportunityDetail opportunity={drawer.opportunity} />;
   if (drawer.type === "trend") return <TrendDetail trend={data.trends[grain]} />;
@@ -595,15 +628,84 @@ function DrawerList({ children }: { children: React.ReactNode }) {
   return <div className="divide-y divide-line">{children}</div>;
 }
 
-function TaskDetail({ task, status, onProgress, updating, appMode }: { task: OverviewTask; status: string; onProgress: () => void; updating: boolean; appMode: string }) {
+function TaskDetail({ task, status, onProgress, onSave, updating, appMode }: { task: OverviewTask; status: string; onProgress: () => void; onSave: (patch: Partial<OverviewTask>) => Promise<void>; updating: boolean; appMode: string }) {
+  const [form, setForm] = useState({
+    status,
+    owner: task.owner,
+    deadline: task.deadline ?? "",
+    result_note: task.result_note ?? "",
+    review_result: task.review_result ?? "",
+    close_reason: task.close_reason ?? "",
+    closed_by: task.closed_by ?? "",
+    closed_at: task.closed_at ?? "",
+  });
+
+  useEffect(() => {
+    setForm({
+      status,
+      owner: task.owner,
+      deadline: task.deadline ?? "",
+      result_note: task.result_note ?? "",
+      review_result: task.review_result ?? "",
+      close_reason: task.close_reason ?? "",
+      closed_by: task.closed_by ?? "",
+      closed_at: task.closed_at ?? "",
+    });
+  }, [status, task]);
+
   return (
     <div className="space-y-5">
       <div><div className="flex items-center gap-2"><Badge tone={priorityTone(task.priority)}>{task.priority}</Badge><Badge tone={workflowTone(status)}>{workflowLabels[status] ?? status}</Badge></div><h3 className="mt-3 text-lg font-semibold">{task.object} · {task.anomaly}</h3><p className="mt-2 text-sm leading-6 text-muted">{task.finding}</p></div>
       <div className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-line bg-line"><InfoCell label="影响金额" value={impactText(task)} tone={(task.impact_amount ?? 0) < 0 ? "danger" : "success"} /><InfoCell label="目标阈值" value={task.target_threshold} /><InfoCell label="当前值" value={metricValue(task.current_value, task.metric_id)} /><InfoCell label="对比值" value={metricValue(task.comparison_value, task.metric_id)} /></div>
       <DetailBlock title="诊断"><p>{task.diagnosis.summary}</p><p className="mt-2 text-xs text-muted">诊断状态 {task.diagnosis.status} · 可信度 {task.diagnosis.confidence_score.toFixed(0)}%</p></DetailBlock>
       <DetailBlock title="建议"><p>{task.recommendation.action}</p>{task.recommendation.stop_condition && <p className="mt-2 text-xs text-muted">停止条件：{task.recommendation.stop_condition}</p>}</DetailBlock>
-      <DetailBlock title="责任与周期"><p>负责人：{task.owner}</p>{task.current_period && <p className="mt-1 text-xs text-muted">当前周期：{dateText(task.current_period)}</p>}{task.comparison_period && <p className="mt-1 text-xs text-muted">对比周期：{dateText(task.comparison_period)}</p>}</DetailBlock>
-      <Button className="w-full" onClick={onProgress} disabled={updating || status === "IN_PROGRESS"}>{status === "IN_PROGRESS" ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}{status === "IN_PROGRESS" ? "已标记处理中" : updating ? "正在更新" : "标记处理中"}</Button>
+      <DetailBlock title="责任与周期">
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="text-xs text-muted">状态
+            <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand">
+              {Object.entries(workflowLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </label>
+          <label className="text-xs text-muted">负责人
+            <input value={form.owner} onChange={(event) => setForm((current) => ({ ...current, owner: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand" />
+          </label>
+          <label className="text-xs text-muted">截止日期
+            <input type="date" value={form.deadline} onChange={(event) => setForm((current) => ({ ...current, deadline: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand" />
+          </label>
+          <label className="text-xs text-muted">关闭人
+            <input value={form.closed_by} onChange={(event) => setForm((current) => ({ ...current, closed_by: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand" />
+          </label>
+        </div>
+        <div className="mt-3 grid gap-3">
+          <label className="text-xs text-muted">处理结果
+            <textarea value={form.result_note} onChange={(event) => setForm((current) => ({ ...current, result_note: event.target.value }))} className="mt-1 min-h-20 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-brand" />
+          </label>
+          <label className="text-xs text-muted">复盘结论
+            <textarea value={form.review_result} onChange={(event) => setForm((current) => ({ ...current, review_result: event.target.value }))} className="mt-1 min-h-20 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-brand" />
+          </label>
+          <label className="text-xs text-muted">关闭原因
+            <textarea value={form.close_reason} onChange={(event) => setForm((current) => ({ ...current, close_reason: event.target.value }))} className="mt-1 min-h-20 w-full rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-brand" />
+          </label>
+          <label className="text-xs text-muted">关闭时间
+            <input type="datetime-local" value={form.closed_at} onChange={(event) => setForm((current) => ({ ...current, closed_at: event.target.value }))} className="mt-1 h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand" />
+          </label>
+        </div>
+        {task.current_period && <p className="mt-2 text-xs text-muted">当前周期：{dateText(task.current_period)}</p>}
+        {task.comparison_period && <p className="mt-1 text-xs text-muted">对比周期：{dateText(task.comparison_period)}</p>}
+      </DetailBlock>
+      <div className="grid grid-cols-2 gap-2">
+        <Button className="w-full" variant="secondary" onClick={onProgress} disabled={updating || status === "IN_PROGRESS"}>{status === "IN_PROGRESS" ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}{status === "IN_PROGRESS" ? "已标记处理中" : updating ? "正在更新" : "标记处理中"}</Button>
+        <Button className="w-full" onClick={() => onSave({
+          status: form.status as OverviewTask["status"],
+          owner: form.owner,
+          deadline: form.deadline || null,
+          result_note: form.result_note,
+          review_result: form.review_result,
+          close_reason: form.close_reason,
+          closed_by: form.closed_by,
+          closed_at: form.closed_at || null,
+        })} disabled={updating}>保存复盘</Button>
+      </div>
       {appMode !== "private" && status === "IN_PROGRESS" && <p className="text-center text-xs text-muted">状态已更新到当前浏览会话</p>}
     </div>
   );

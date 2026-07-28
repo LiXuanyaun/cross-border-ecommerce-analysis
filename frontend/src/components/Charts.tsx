@@ -1,6 +1,5 @@
-import ReactECharts from "echarts-for-react";
-import type { EChartsOption } from "echarts";
 import { Card } from "./ui";
+import { EChart, type EChartsOption } from "./EChart";
 
 const axis = { axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#98a2b3", fontSize: 11 }, splitLine: { lineStyle: { color: "#eef1f5", type: "dashed" as const } } };
 
@@ -17,7 +16,7 @@ export function TrendChart({ rows, title = "经营趋势", valueKey = "gmv" }: {
       { name: "趋势基线", type: "line", smooth: true, symbol: "none", data: rows.map((row, index) => Number(row[valueKey] ?? row.current ?? 0) * (0.9 + (index % 3) * .07)), lineStyle: { width: 1.5, type: "dashed" } },
     ]
   };
-  return <Card className="min-h-[310px] p-4"><h3 className="text-sm font-semibold text-ink">{title}</h3><ReactECharts option={option} style={{ height: 250 }} notMerge lazyUpdate /></Card>;
+  return <Card className="min-h-[310px] p-4"><h3 className="text-sm font-semibold text-ink">{title}</h3><EChart option={option} style={{ height: 250 }} notMerge lazyUpdate /></Card>;
 }
 
 export function DonutChart({ rows, title = "构成分析" }: { rows: Array<Record<string, unknown>>; title?: string }) {
@@ -27,7 +26,7 @@ export function DonutChart({ rows, title = "构成分析" }: { rows: Array<Recor
     legend: { orient: "vertical", right: 0, top: "middle", textStyle: { color: "#667085", fontSize: 11 } },
     series: [{ type: "pie", radius: ["48%", "70%"], center: ["34%", "54%"], label: { show: false }, data: rows.map(row => ({ name: String(row.name ?? row.category_label ?? "未标注"), value: Number(row.gmv ?? row.current ?? 0) })) }],
   };
-  return <Card className="min-h-[250px] p-4"><h3 className="text-sm font-semibold text-ink">{title}</h3><ReactECharts option={option} style={{ height: 205 }} /></Card>;
+  return <Card className="min-h-[250px] p-4"><h3 className="text-sm font-semibold text-ink">{title}</h3><EChart option={option} style={{ height: 205 }} /></Card>;
 }
 
 export function BarRanking({ rows, title }: { rows: Array<Record<string, unknown>>; title: string }) {
@@ -39,5 +38,5 @@ export function BarRanking({ rows, title }: { rows: Array<Record<string, unknown
     yAxis: { type: "category", inverse: true, data: names, axisLine: { show: false }, axisTick: { show: false }, axisLabel: { color: "#475467", fontSize: 11 } },
     series: [{ type: "bar", data: values, barWidth: 7, itemStyle: { color: "#5b8ff9", borderRadius: 4 } }]
   };
-  return <Card className="min-h-[250px] p-4"><h3 className="text-sm font-semibold text-ink">{title}</h3><ReactECharts option={option} style={{ height: 205 }} /></Card>;
+  return <Card className="min-h-[250px] p-4"><h3 className="text-sm font-semibold text-ink">{title}</h3><EChart option={option} style={{ height: 205 }} /></Card>;
 }

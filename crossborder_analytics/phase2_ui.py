@@ -58,10 +58,9 @@ ACTION_TYPE_LABELS = {
 WORKFLOW_LABELS = {
     "TODO": "待处理",
     "IN_PROGRESS": "处理中",
-    "REVIEW": "待复盘",
     "COMPLETED": "已完成",
-    "DISMISSED": "暂不处理",
-    "WAITING_DATA": "等待数据或完整周期",
+    "REVIEWED": "已复盘",
+    "CLOSED": "已关闭",
 }
 ANALYSIS_STATUS_LABELS = {
     "DETECTED": "已触发",
@@ -357,8 +356,6 @@ def _work_item_map(bundle) -> dict:
 
 
 def _default_workflow_status(anomaly) -> str:
-    if str(anomaly.status) == "SUPPRESSED":
-        return "WAITING_DATA"
     if str(anomaly.status) == "RECOVERED":
         return "COMPLETED"
     return "TODO"
@@ -497,7 +494,8 @@ def _risk_export_frame(items) -> pd.DataFrame:
             "workflow_status_label": WORKFLOW_LABELS.get(_workflow_value(anomaly, work_item), _workflow_value(anomaly, work_item)),
             "owner": work_item.owner if work_item else "",
             "due_date": work_item.due_date if work_item else None,
-            "resolution_note": work_item.resolution_note if work_item else "",
+            "result_note": work_item.result_note if work_item else "",
+            "review_result": work_item.review_result if work_item else "",
             "updated_at": work_item.updated_at if work_item else None,
             "period_start": current.period_start if current else None,
             "period_end": current.period_end if current else None,
@@ -562,19 +560,27 @@ def _render_work_item_editor(bundle, anomaly, insight, recommendation, work_item
         owner = fields[1].text_input("负责人", value=default_owner, placeholder="填写具体负责人或团队")
         due_date = fields[2].date_input("计划完成日期", value=default_due)
         note = st.text_area(
-            "处理记录与结论", value=work_item.resolution_note if work_item else "",
+            "处理记录、复盘结论或关闭原因", value=(work_item.result_note or work_item.review_result or work_item.close_reason) if work_item else "",
             placeholder="记录已核查内容、采取的动作、验证结果或暂不处理原因",
         )
         submitted = st.form_submit_button("保存处理进度", type="primary")
     if submitted:
         if status == "COMPLETED" and not note.strip():
             st.error("标记已完成前，请填写处理结论。")
-        elif not owner.strip() and status not in {"DISMISSED", "WAITING_DATA"}:
+        elif status == "REVIEWED" and not note.strip():
+            st.error("标记已复盘前，请填写复盘结论。")
+        elif status == "CLOSED" and not note.strip():
+            st.error("关闭任务前，请填写关闭原因。")
+        elif not owner.strip() and status != "TODO":
             st.error("请填写负责人。")
         else:
             store.save_work_item(
                 scope_id, anomaly.anomaly_id, insight.insight_id if insight else None,
-                status, owner, due_date.isoformat() if due_date else None, note,
+                status, owner, due_date.isoformat() if due_date else None,
+                note if status == "COMPLETED" else "",
+                note if status == "REVIEWED" else "",
+                note if status == "CLOSED" else "",
+                owner if status == "CLOSED" else "",
             )
             st.success("处理进度已保存。")
             st.rerun()

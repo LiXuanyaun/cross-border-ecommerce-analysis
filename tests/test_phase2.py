@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import sqlite3
 
 import pandas as pd
@@ -59,6 +60,7 @@ def test_phase2_persists_stable_metrics_and_replays_evidence(tmp_path):
 
     context = service.prepare(_source(tmp_path), source_currency="CNY", target_currency="CNY")
     repeated = service.run(context)
+    assert repeated.metadata.get("scope_cache") == "HIT"
     assert [item.snapshot_id for item in repeated.artifacts.metric_snapshots] == [
         item.snapshot_id for item in bundle.artifacts.metric_snapshots
     ]
@@ -69,6 +71,38 @@ def test_phase2_persists_stable_metrics_and_replays_evidence(tmp_path):
         assert connection.execute("SELECT status FROM analysis_runs").fetchone()[0] == "READY"
         assert connection.execute("SELECT COUNT(*) FROM metric_snapshots").fetchone()[0] == len(bundle.artifacts.metric_snapshots)
         assert connection.execute("SELECT COUNT(*) FROM insights").fetchone()[0] == len(bundle.artifacts.insights)
+
+
+def test_scope_cache_hit_still_returns_legacy_bundle_metadata_and_results(tmp_path):
+    bundle, service = _bundle(tmp_path)
+    context = service.prepare(_source(tmp_path), source_currency="CNY", target_currency="CNY")
+
+    repeated = service.run(context)
+
+    assert repeated.metadata["scope_cache"] == "HIT"
+    assert repeated.metadata["scope_id"] == bundle.metadata["scope_id"]
+    assert repeated.metadata["analysis_request"] == bundle.metadata["analysis_request"]
+    assert repeated.metadata["query_runs"]
+    assert repeated.results["overview"].status.name == "SUCCESS"
+    assert repeated.results["sales"].status.name == "SUCCESS"
+    assert repeated.results["overview"].data["orders"] == bundle.results["overview"].data["orders"]
+    assert repeated.artifacts.metric_snapshots[0].scope_id == bundle.metadata["scope_id"]
+
+
+def test_topic_detail_cache_searches_and_pages_in_sqlite(tmp_path):
+    store = ArtifactStore(tmp_path / "topics.db")
+    store.save_topic_details("scope-test", "product", [
+        {"product_id": "SKU-1", "name": "Alpha"},
+        {"product_id": "SKU-2", "name": "Beta"},
+        {"product_id": "SKU-3", "name": "Alpha Plus"},
+    ])
+
+    first_page, total = store.topic_details_page("scope-test", "product", "alpha", 1, 1)
+    second_page, repeated_total = store.topic_details_page("scope-test", "product", "alpha", 2, 1)
+
+    assert total == repeated_total == 2
+    assert first_page == [{"product_id": "SKU-1", "name": "Alpha"}]
+    assert second_page == [{"product_id": "SKU-3", "name": "Alpha Plus"}]
 
 
 def test_missing_business_fields_disable_metrics_and_create_improvement_plan(tmp_path):
@@ -176,18 +210,19 @@ def test_work_item_progress_persists_by_scope_and_anomaly(tmp_path):
 
     saved = store.save_work_item(
         bundle.metadata["scope_id"], anomaly.anomaly_id, insight.insight_id,
-        "IN_PROGRESS", "华南运营组", "2025-05-31", "已完成价格带初查",
+        "REVIEWED", "华南运营组", "2025-05-31", "已完成价格带初查", "目标指标改善，保护指标未恶化",
     )
     loaded = {item.anomaly_id: item for item in store.work_items(bundle.metadata["scope_id"])}[anomaly.anomaly_id]
 
     assert saved.work_item_id == loaded.work_item_id
-    assert str(loaded.workflow_status) == "IN_PROGRESS"
+    assert str(loaded.workflow_status) == "REVIEWED"
     assert loaded.owner == "华南运营组"
     assert loaded.due_date == "2025-05-31"
-    assert loaded.resolution_note == "已完成价格带初查"
+    assert loaded.result_note == "已完成价格带初查"
+    assert loaded.review_result == "目标指标改善，保护指标未恶化"
 
 
-def test_event_period_requires_equal_explicit_windows_and_exports_v25_manifest(tmp_path):
+def test_event_period_requires_equal_explicit_windows_and_exports_manifest(tmp_path):
     with pytest.raises(ValueError, match="equal length"):
         AnalysisRequest(
             period_type="event", period_start="2025-03-01", period_end="2025-03-10",
@@ -202,7 +237,7 @@ def test_event_period_requires_equal_explicit_windows_and_exports_v25_manifest(t
     assert event_snapshots
     paths = export_bundle(bundle, tmp_path / "outputs")
     manifest = pd.read_json(paths["manifest"], typ="series")
-    assert manifest["version"] == "2.5.0"
+    assert manifest["version"] == "3.1.0"
     assert manifest["metric_definitions"]
     assert manifest["insights"]
     assert paths["excel"].exists() and paths["docx"].exists()
@@ -242,3 +277,156 @@ def test_summary_and_scoped_exports_use_opportunity_objects(tmp_path):
     assert manifest["product_opportunities"]
     assert manifest["action_items"]
     assert manifest["report_options"]["scope_value"] == market
+
+
+def test_commercial_fields_produce_metrics_when_present():
+    service = AnalysisService(database_path=None, backend="pandas")
+    frame = pd.DataFrame([
+        {
+            "order_id": "O1",
+            "order_date": "2025-06-01",
+            "total_amount": 100.0,
+            "profit_amount": 30.0,
+            "cost_amount": 50.0,
+            "refund_amount": 5.0,
+            "ad_spend": 10.0,
+            "inventory_available": 20,
+            "stockout_flag": False,
+            "returned": False,
+            "quantity": 2,
+            "customer_id": "C1",
+            "product_id": "P1",
+            "category": "Cat",
+            "country": "US",
+            "campaign_id": "CMP1",
+            "channel": "Shop",
+            "store_id": "StoreA",
+        },
+        {
+            "order_id": "O2",
+            "order_date": "2025-06-02",
+            "total_amount": 200.0,
+            "profit_amount": 60.0,
+            "cost_amount": 120.0,
+            "refund_amount": 10.0,
+            "ad_spend": 20.0,
+            "inventory_available": 15,
+            "stockout_flag": True,
+            "returned": True,
+            "quantity": 1,
+            "customer_id": "C2",
+            "product_id": "P2",
+            "category": "Cat",
+            "country": "US",
+            "campaign_id": "CMP1",
+            "channel": "Shop",
+            "store_id": "StoreA",
+        },
+    ])
+    context = service.prepare(
+        frame.to_csv(index=False).encode("utf-8"),
+        filename="commercial.csv",
+        source_currency="CNY",
+        target_currency="CNY",
+    )
+    bundle = service.run(context)
+    metrics = {item.metric_id: item for item in bundle.artifacts.metric_snapshots}
+
+    assert metrics["ad_spend"].current_value == 30.0
+    assert metrics["refund_amount"].current_value == 15.0
+    assert metrics["cost_amount"].current_value == 170.0
+    assert metrics["net_profit"].current_value == 45.0
+    assert metrics["roas"].current_value == 10.0
+    assert metrics["stockout_rate"].current_value == 0.5
+
+
+def test_scope_capacity_archive_and_retention_cleanup(tmp_path):
+    store = ArtifactStore(tmp_path / "retention.db")
+    request = AnalysisRequest()
+    for index in range(3):
+        scope_id = "scope-{}".format(index)
+        store.begin_run(scope_id, "dataset", request, {"metrics": "1"})
+        with store.connection() as connection:
+            connection.execute(
+                "UPDATE analysis_runs SET status='READY', completed_at=? WHERE scope_id=?",
+                ("2025-01-0{}T00:00:00Z".format(index + 1), scope_id),
+            )
+            connection.commit()
+
+    assert store.archive_scope("scope-1") is True
+    capacity = store.capacity()
+    assert capacity["scope_statuses"] == {"ARCHIVED": 1, "READY": 2}
+    assert capacity["database_bytes"] > 0
+    removed = store.cleanup_scopes(keep_latest=1)
+    assert removed == ["scope-1", "scope-0"]
+    assert store.capacity()["record_counts"]["analysis_runs"] == 1
+
+
+def test_scope_retention_cleanup_accepts_ttl_days(tmp_path):
+    store = ArtifactStore(tmp_path / "ttl.db")
+    request = AnalysisRequest()
+    for scope_id, completed_at in (
+        ("old-scope", "2025-01-01T00:00:00+00:00"),
+        ("fresh-scope", "2026-07-21T00:00:00+00:00"),
+    ):
+        store.begin_run(scope_id, "dataset", request, {"metrics": "1"})
+        with store.connection() as connection:
+            connection.execute(
+                "UPDATE analysis_runs SET status='READY', completed_at=? WHERE scope_id=?",
+                (completed_at, scope_id),
+            )
+            connection.commit()
+
+    removed = store.cleanup_scopes(keep_latest=20, ttl_days=90)
+
+    assert removed == ["old-scope"]
+    assert store.capacity()["scope_statuses"] == {"READY": 1}
+
+
+def test_trim_entity_assessments_drops_low_sample_tail(tmp_path):
+    store = ArtifactStore(tmp_path / "trim.db")
+    request = AnalysisRequest()
+    scope_id = "scope-trim"
+    store.begin_run(scope_id, "dataset", request, {"metrics": "1"})
+    with store.connection() as connection:
+        for index, (value, sample_size) in enumerate((
+            ("低样本", 0),
+            ("低样本", 1),
+            ("成熟品", 20),
+            ("成长品", 15),
+            ("衰退品", 12),
+        )):
+            payload = {
+                "assessment_id": "assess-{}".format(index),
+                "dataset_id": "dataset",
+                "scope_id": scope_id,
+                "assessment_type": "sku_lifecycle",
+                "entity_type": "sku",
+                "entity_id": "SKU-{}".format(index),
+                "period_start": "2025-01-01",
+                "period_end": "2025-01-31",
+                "value": value,
+                "sample_size": sample_size,
+                "evidence_ids": ["ev-1"],
+                "limitations": [],
+            }
+            connection.execute(
+                "INSERT INTO entity_assessments VALUES(?,?,?,?,?,?,?)",
+                (
+                    payload["assessment_id"], "dataset", scope_id, "sku_lifecycle",
+                    "sku", payload["entity_id"], json.dumps(payload, ensure_ascii=False),
+                ),
+            )
+        connection.commit()
+
+    trimmed = store.trim_entity_assessments(max_per_scope=2)
+
+    with store.connection() as connection:
+        rows = [
+            json.loads(row["payload_json"])
+            for row in connection.execute(
+                "SELECT payload_json FROM entity_assessments ORDER BY payload_json"
+            )
+        ]
+    assert trimmed == 3
+    assert {row["value"] for row in rows} == {"成熟品", "成长品"}

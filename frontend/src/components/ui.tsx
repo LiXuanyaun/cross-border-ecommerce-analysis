@@ -22,7 +22,7 @@ export function Button({ className, variant = "default", ...props }: ButtonHTMLA
 
 export function Badge({ children, tone = "neutral", className }: { children: ReactNode; tone?: "neutral" | "blue" | "green" | "orange" | "red"; className?: string }) {
   const tones = { neutral: "bg-[#f2f4f7] text-[#475467]", blue: "bg-[#eff4ff] text-brand", green: "bg-[#ecfdf3] text-[#027a48]", orange: "bg-[#fffaeb] text-[#b54708]", red: "bg-[#fef3f2] text-[#b42318]" };
-  return <span className={cx("inline-flex h-6 items-center rounded px-2 text-xs font-medium", tones[tone], className)}>{children}</span>;
+  return <span className={cx("inline-flex h-6 items-center whitespace-nowrap rounded px-2 text-xs font-medium", tones[tone], className)}>{children}</span>;
 }
 
 export function Skeleton({ className }: { className?: string }) { return <div className={cx("animate-pulse rounded-md bg-[#eef2f6]", className)} />; }

@@ -27,10 +27,34 @@ ECOMMERCE_CONTRACT = DatasetContract(
         FieldSpec("total_amount", dtype="float", required=True, nullable=False, aliases=("GMV", "订单金额", "销售额")),
         FieldSpec("shipping_cost", dtype="float", aliases=("运费",)),
         FieldSpec("profit_amount", dtype="float", aliases=("profit_margin", "利润", "利润额"), semantic="amount"),
+        FieldSpec("cost_amount", dtype="float", aliases=("成本", "商品成本", "订单成本"), semantic="amount"),
+        FieldSpec("refund_amount", dtype="float", aliases=("退款金额", "退款额", "退款损失"), semantic="amount"),
+        FieldSpec("ad_spend", dtype="float", aliases=("广告花费", "广告投放", "投放金额"), semantic="amount"),
+        FieldSpec("campaign_id", aliases=("campaign_id", "campaign", "广告活动ID")),
+        FieldSpec("inventory_available", dtype="integer", aliases=("可用库存", "库存可用量", "库存数量")),
+        FieldSpec("stockout_flag", dtype="boolean", aliases=("缺货", "断货")),
+        FieldSpec("return_reason", aliases=("退货原因", "退款原因")),
+        FieldSpec("shipping_status", aliases=("发货状态", "物流状态")),
+        FieldSpec("channel", aliases=("渠道", "销售渠道")),
+        FieldSpec("store_id", aliases=("店铺ID", "门店ID", "店铺编号")),
         FieldSpec("customer_age", dtype="integer", aliases=("客户年龄",)),
         FieldSpec("customer_gender", aliases=("客户性别",)),
         FieldSpec("currency", aliases=("币种", "货币", "currency_code")),
     ),
+)
+
+# Import preview needs to inspect duplicate order ids before the user confirms
+# whether each row is an order or an order line.
+ECOMMERCE_IMPORT_CONTRACT = DatasetContract(
+    name="cross_border_order_import_v3",
+    grain_key=None,
+    fields=ECOMMERCE_CONTRACT.fields,
+)
+
+ECOMMERCE_STORAGE_CONTRACT = DatasetContract(
+    name="cross_border_order_records_v3",
+    grain_key="record_id",
+    fields=(FieldSpec("record_id", required=True, nullable=False),) + ECOMMERCE_CONTRACT.fields,
 )
 
 

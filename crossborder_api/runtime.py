@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from threading import RLock
 from typing import Any
 import math
@@ -12,11 +11,20 @@ import os
 import pandas as pd
 
 from crossborder_analytics.localization import value_for
+from crossborder_analytics.database import CrossBorderDatabase
 from crossborder_analytics.decision_brief import build_decision_brief
+from crossborder_analytics.phase2_catalogs import ANOMALY_RULES, METRICS_CATALOG
 from crossborder_analytics.phase2_models import AnalysisRequest
-from crossborder_analytics.reporting import export_bundle
+from crossborder_analytics.phase2_storage import ArtifactStore
 from crossborder_analytics.service import AnalysisService
+from crossborder_analytics.data_quality import assess_business_quality
+from crossborder_analytics.modules import amount_column
+from .report_runtime import export_scoped_bundle
+from .agent_tools import build_agent_tool_registry
+from .dataset_import_runtime import import_datasets as import_uploaded_datasets
 from .state import StateStore
+from .task_lifecycle import normalize_work_item_patch
+from .topic_decisions import formal_topic_decisions
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +38,9 @@ class DemoScenario:
     description: str
     filters: dict[str, tuple[str, ...]]
     source_type: str
+    is_demo: bool = True
+    created_at: str | None = None
+    metadata: dict[str, Any] | None = None
 
 
 SCENARIOS = (
@@ -125,6 +136,7 @@ class AnalyticsRuntime:
         self._lock = RLock()
         self._context = None
         self._service = AnalysisService(cache_dir=ROOT / ".cache" / "fx")
+        self.agent_tools = build_agent_tool_registry()
         self.state_store = None
         if self.app_mode == "private":
             state_path = Path(os.getenv("CROSSBORDER_STATE_DB", ROOT / "database" / "crossborder_state.db"))
@@ -140,14 +152,53 @@ class AnalyticsRuntime:
                     )
         return self._context
 
+    def _database(self) -> CrossBorderDatabase:
+        if self._service.database_path is None:
+            raise RuntimeError("SQL 数据库未配置")
+        return CrossBorderDatabase(self._service.database_path)
+
+    def _artifact_store(self) -> ArtifactStore:
+        if self._service.database_path is None:
+            raise RuntimeError("分析结果存储未配置")
+        return ArtifactStore(self._service.database_path)
+
+    def _imported_scenarios(self) -> tuple[DemoScenario, ...]:
+        output = []
+        for item in self._database().list_datasets():
+            metadata = item["metadata"]
+            filename = item.get("filename") or "上传数据"
+            output.append(DemoScenario(
+                dataset_id=item["dataset_id"],
+                name=str(metadata.get("dataset_name") or Path(filename).stem),
+                description="由 {} 导入的正式数据集".format(filename),
+                filters={},
+                source_type="Web 上传",
+                is_demo=False,
+                created_at=item["created_at"],
+                metadata=metadata,
+            ))
+        return tuple(output)
+
+    def _context_for(self, dataset_id: str):
+        if any(item.dataset_id == dataset_id for item in SCENARIOS):
+            return self._ensure_context()
+        context = self._database().load_context(dataset_id)
+        if context is None:
+            raise KeyError(dataset_id)
+        return context
+
+    def clear_analysis_cache(self) -> None:
+        self.bundle.cache_clear()
+        self._topic_base.cache_clear()
+
     def scenario(self, dataset_id: str) -> DemoScenario:
-        for item in SCENARIOS:
+        for item in SCENARIOS + self._imported_scenarios():
             if item.dataset_id == dataset_id:
                 return item
         raise KeyError(dataset_id)
 
-    def date_bounds(self) -> tuple[str, str]:
-        frame = self._ensure_context().analysis_data
+    def date_bounds(self, dataset_id: str = "demo-all") -> tuple[str, str]:
+        frame = self._context_for(dataset_id).analysis_data
         return frame.order_date.min().date().isoformat(), frame.order_date.max().date().isoformat()
 
     @lru_cache(maxsize=64)
@@ -159,6 +210,8 @@ class AnalyticsRuntime:
         market: str | None = None,
         category: str | None = None,
         period_type: str = "month",
+        analysis_mode: str = "full",
+        topic: str | None = None,
     ):
         scenario = self.scenario(dataset_id)
         filters: dict[str, Any] = {key: list(values) for key, values in scenario.filters.items()}
@@ -169,8 +222,10 @@ class AnalyticsRuntime:
         if category:
             filters["category"] = [category]
         return self._service.run(
-            self._ensure_context(),
-            request=AnalysisRequest(filters=filters, period_type=period_type),
+            self._context_for(dataset_id),
+            request=AnalysisRequest(
+                filters=filters, period_type=period_type, analysis_mode=analysis_mode, topic=topic,
+            ),
         )
 
     def meta(self, bundle, dataset_id: str) -> dict[str, Any]:
@@ -203,7 +258,7 @@ class AnalyticsRuntime:
     ) -> dict[str, Any]:
         source = frame.copy()
         source["order_date"] = pd.to_datetime(source["order_date"]).dt.normalize()
-        amount = "total_amount_base" if "total_amount_base" in source else "total_amount"
+        amount = amount_column(source)
         current_start_date = pd.Timestamp(current_start).normalize()
         current_end_date = pd.Timestamp(current_end).normalize()
         comparison_start_date = pd.Timestamp(comparison_start).normalize()
@@ -246,19 +301,19 @@ class AnalyticsRuntime:
         }
 
     def overview(self, dataset_id: str, start: str | None = None, end: str | None = None) -> tuple[dict, Any]:
-        selection_start, selection_end = self.date_bounds()
+        selection_start, selection_end = self.date_bounds(dataset_id)
         selection_start = start or selection_start
         selection_end = end or selection_end
         bundle = self.bundle(dataset_id, selection_start, selection_end)
         artifacts = bundle.artifacts
 
         scenario = self.scenario(dataset_id)
-        source = self._ensure_context().analysis_data.copy()
+        source = self._context_for(dataset_id).analysis_data.copy()
         for field, values in scenario.filters.items():
             if field in source:
                 source = source.loc[source[field].astype(str).isin([str(value) for value in values])]
         source["order_date"] = pd.to_datetime(source["order_date"]).dt.normalize()
-        amount = "total_amount_base" if "total_amount_base" in source else "total_amount"
+        amount = amount_column(source)
 
         global_months = [
             item for item in artifacts.metric_snapshots
@@ -317,6 +372,9 @@ class AnalyticsRuntime:
                 "sparkline": sparkline,
                 "basis": "最近完整月；环比上一完整月",
                 "threshold": threshold,
+                "metric_id": metric_id,
+                "metric_version": current.metric_version if current else None,
+                "evidence_id": current.evidence_id if current else None,
             })
 
         market_current = source.loc[source.order_date.between(current_period["start"], current_period["end"])]
@@ -340,11 +398,15 @@ class AnalyticsRuntime:
                 "previous_gmv": previous_gmv,
             })
 
-        categories_frame = (
-            bundle.results["sales"].data["category_contribution"]
-            .rename(columns={"current": "gmv"})
-            .sort_values("gmv", ascending=False)
-        )
+        sales_result = bundle.results.get("sales")
+        sales_data = sales_result.data if sales_result and isinstance(sales_result.data, dict) else {}
+        category_source = sales_data.get("category_contribution")
+        categories_frame = pd.DataFrame(columns=["category", "gmv"])
+        if isinstance(category_source, pd.DataFrame) and "current" in category_source:
+            categories_frame = (
+                category_source.rename(columns={"current": "gmv"})
+                .sort_values("gmv", ascending=False)
+            )
         category_total = float(categories_frame.gmv.sum())
         categories = [
             {
@@ -354,6 +416,19 @@ class AnalyticsRuntime:
             }
             for row in _records(categories_frame, 7)
         ]
+        monthly_source = sales_data.get("monthly")
+        if isinstance(monthly_source, pd.DataFrame) and "month" in monthly_source:
+            trend_frame = monthly_source.sort_values("month").tail(12)
+        else:
+            source_for_trend = source.copy()
+            source_for_trend["month"] = source_for_trend["order_date"].dt.to_period("M").astype(str)
+            trend_frame = (
+                source_for_trend.groupby("month")
+                .agg(gmv=(amount, "sum"), orders=("order_id", "nunique"))
+                .reset_index()
+                .sort_values("month")
+                .tail(12)
+            )
 
         snapshot_by_id = {item.snapshot_id: item for item in artifacts.metric_snapshots}
         anomaly_by_id = {item.anomaly_id: item for item in artifacts.anomalies}
@@ -399,12 +474,16 @@ class AnalyticsRuntime:
                 None,
             )
             saved = self._work_items.get(anomaly.anomaly_id, {})
+            deadline = saved.get("deadline") or saved.get("due_date")
             tasks.append({
                 "id": anomaly.anomaly_id,
                 "insight_id": insight.insight_id,
                 "object": _entity_label(insight.entity_type, insight.entity_name),
                 "object_type": insight.entity_type,
                 "metric_id": insight.metric_id,
+                "metric_version": current.metric_version if current else None,
+                "rule_id": anomaly.rule_id,
+                "rule_version": anomaly.rule_version,
                 "metric_label": METRIC_LABELS.get(insight.metric_id, insight.metric_id),
                 "anomaly": rule.name if rule else anomaly.rule_id,
                 "finding": insight.finding,
@@ -415,6 +494,12 @@ class AnalyticsRuntime:
                 "analysis_status": str(anomaly.status),
                 "status": saved.get("workflow_status", "TODO"),
                 "owner": saved.get("owner", recommendation.owner_role if recommendation else "经营负责人"),
+                "deadline": deadline,
+                "result_note": saved.get("result_note", ""),
+                "review_result": saved.get("review_result", ""),
+                "close_reason": saved.get("close_reason", ""),
+                "closed_by": saved.get("closed_by", ""),
+                "closed_at": saved.get("closed_at"),
                 "current_value": insight.current_value,
                 "comparison_value": insight.previous_value,
                 "change_rate": insight.change_rate,
@@ -492,6 +577,7 @@ class AnalyticsRuntime:
             task = tasks_by_insight.get(insight.insight_id)
             if task:
                 anomaly = anomaly_by_id.get(insight.anomaly_id)
+                insight_snapshot = snapshot_by_id.get(insight.current_snapshot_id)
                 history = insight_snapshot_groups.get(
                     (insight.metric_id, insight.entity_type, insight.entity_id), [],
                 )
@@ -585,6 +671,10 @@ class AnalyticsRuntime:
                     },
                     "evidence": task["evidence"],
                     "recommendation": task["recommendation"],
+                    "metric_id": insight.metric_id,
+                    "metric_version": insight_snapshot.metric_version if insight_snapshot else None,
+                    "rule_id": task["rule_id"],
+                    "rule_version": task["rule_version"],
                 })
 
         methodology = {
@@ -635,7 +725,7 @@ class AnalyticsRuntime:
                 "day": self._comparison_trend(source, current_period["start"], current_period["end"], comparison_period["start"], comparison_period["end"], "day"),
                 "week": self._comparison_trend(source, current_period["start"], current_period["end"], comparison_period["start"], comparison_period["end"], "week"),
             },
-            "trend": _records(bundle.results["sales"].data["monthly"].sort_values("month").tail(12)),
+            "trend": _records(trend_frame),
             "markets": markets,
             "market_comparison_period": {"start": yoy_start, "end": yoy_end, "type": "year_over_year"},
             "categories": categories,
@@ -645,6 +735,18 @@ class AnalyticsRuntime:
             "methodology": methodology,
             "currency": "CNY",
         }), bundle
+
+    @lru_cache(maxsize=128)
+    def _topic_base(
+        self,
+        dataset_id: str,
+        topic: str,
+        start: str | None,
+        end: str | None,
+        market: str | None,
+        category: str | None,
+    ) -> tuple[dict, Any]:
+        return self._topic_uncached(dataset_id, topic, start, end, market, category)
 
     def topic(
         self,
@@ -658,13 +760,54 @@ class AnalyticsRuntime:
         page: int,
         page_size: int,
     ) -> tuple[dict, Any]:
-        bundle = self.bundle(dataset_id, start, end, market, category)
+        base, bundle = self._topic_base(dataset_id, topic, start, end, market, category)
+        scope_id = bundle.metadata.get("scope_id")
+        if not scope_id:
+            raise RuntimeError("专题分析缺少 scope_id")
+        detail_records = list(base.get("_detail_records", []))
+        if search:
+            needle = search.casefold()
+            detail_records = [
+                row for row in detail_records
+                if needle in str(row).casefold()
+            ]
+        total = len(detail_records)
+        offset = (page - 1) * page_size
+        rows = detail_records[offset:offset + page_size]
+        public_base = {
+            key: value for key, value in base.items()
+            if key != "_detail_records"
+        }
+        data = {
+            **public_base,
+            "details": rows,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total,
+                "pages": max(1, math.ceil(total / page_size)),
+            },
+        }
+        return data, bundle
+
+    def _topic_uncached(
+        self,
+        dataset_id: str,
+        topic: str,
+        start: str | None,
+        end: str | None,
+        market: str | None,
+        category: str | None,
+    ) -> tuple[dict, Any]:
+        bundle = self.bundle(
+            dataset_id, start, end, market, category, analysis_mode="topic", topic=topic,
+        )
         sales = bundle.results["sales"].data
         overview = bundle.results["overview"].data
         source = bundle.context.analysis_data.copy()
         source["order_date"] = pd.to_datetime(source["order_date"])
         source["month"] = source.order_date.dt.to_period("M").astype(str)
-        amount = "total_amount_base" if "total_amount_base" in source else "total_amount"
+        amount = amount_column(source)
         profit_field = next(
             (field for field in ("profit_amount_base", "profit_amount") if field in source),
             None,
@@ -703,8 +846,8 @@ class AnalyticsRuntime:
         monthly["gmv_per_customer"] = monthly.gmv / monthly.get("customers", pd.Series(index=monthly.index, dtype=float)).where(monthly.get("customers", pd.Series(index=monthly.index, dtype=float)).ne(0))
         monthly["frequency"] = monthly.orders / monthly.get("customers", pd.Series(index=monthly.index, dtype=float)).where(monthly.get("customers", pd.Series(index=monthly.index, dtype=float)).ne(0))
 
-        selection_start = pd.Timestamp(start or self.date_bounds()[0]).normalize()
-        selection_end = pd.Timestamp(end or self.date_bounds()[1]).normalize()
+        selection_start = pd.Timestamp(start or self.date_bounds(dataset_id)[0]).normalize()
+        selection_end = pd.Timestamp(end or self.date_bounds(dataset_id)[1]).normalize()
         complete_months = monthly.month.astype(str).tolist()
         if complete_months and selection_start.day > 1:
             complete_months = complete_months[1:]
@@ -791,7 +934,6 @@ class AnalyticsRuntime:
         ranking_format: str
         ranking_secondary_format: str | None = None
         module_name: str
-        topic_action: dict[str, Any]
 
         if topic == "market":
             analysis_frame = bundle.results["region"].data.sort_values("gmv", ascending=False).copy()
@@ -822,7 +964,6 @@ class AnalyticsRuntime:
             composition_title, composition_format = "市场 GMV 构成", "currency"
             ranking_title, ranking_format, ranking_secondary_format = "市场规模排名", "currency", "percent"
             module_name = "region"
-            topic_action = {"title": "执行头部市场策略", "action": str(top.strategy_reason) if top is not None else "等待形成可比较市场样本", "owner": "市场运营负责人"}
         elif topic == "product":
             analysis_frame = bundle.results["product"].data["products"].sort_values("gmv", ascending=False).copy()
             analysis_frame["name"] = analysis_frame.product_name.fillna(analysis_frame.product_id)
@@ -853,7 +994,6 @@ class AnalyticsRuntime:
             composition_title, composition_format = "品类 GMV 构成", "currency"
             ranking_title, ranking_format, ranking_secondary_format = "商品 GMV 排名", "currency", "text"
             module_name = "product"
-            topic_action = {"title": "执行商品矩阵动作", "action": str(top.recommended_action) if top is not None else "等待形成可比较商品样本", "owner": "商品运营负责人"}
         elif topic == "customer":
             segments = bundle.results["customer"].data["segments"].sort_values("gmv", ascending=False).copy()
             analysis_frame = bundle.results["customer"].data["customers"].sort_values("monetary", ascending=False).copy()
@@ -886,7 +1026,6 @@ class AnalyticsRuntime:
             ranking_title, ranking_format, ranking_secondary_format = "客户分群价值排名", "currency", "integer"
             module_name = "customer"
             churn = next((row for _, row in segments.iterrows() if row.segment == "流失风险客户"), None)
-            topic_action = {"title": "优先复核流失风险客户", "action": "按最近购买间隔与累计贡献排序复核{:,}名流失风险客户".format(int(churn.customers)) if churn is not None else "持续按 RFM 周期复核客户价值", "owner": "客户运营负责人"}
         elif topic == "profit":
             analysis_frame = bundle.results["product"].data["products"].sort_values("profit", ascending=False).copy()
             analysis_frame["name"] = analysis_frame.product_name.fillna(analysis_frame.product_id)
@@ -918,7 +1057,6 @@ class AnalyticsRuntime:
             composition_title, composition_format = "品类利润构成", "currency"
             ranking_title, ranking_format, ranking_secondary_format = "商品利润贡献排名", "currency", "percent"
             module_name = "product"
-            topic_action = {"title": "复核亏损商品", "action": "按亏损额排序检查成本、折扣与价格带，优先处理前{:,}个亏损商品".format(min(20, len(loss_products))), "owner": "利润运营负责人"}
         elif topic == "returns":
             product_returns = source.groupby("product_id").agg(
                 orders=("order_id", "nunique"), returned_orders=("_returned", "sum"),
@@ -958,7 +1096,6 @@ class AnalyticsRuntime:
             composition_title, composition_format = "品类退货关联 GMV", "currency"
             ranking_title, ranking_format, ranking_secondary_format = "高退货商品排名", "percent", "integer"
             module_name = "returns"
-            topic_action = {"title": "复核高退货品类", "action": "检查{}的商品描述、质量反馈与配送体验".format(_localize(top.category, "category")) if top is not None else "等待形成可比较退货样本", "owner": "售后运营负责人"}
         else:
             raise KeyError(topic)
 
@@ -987,43 +1124,20 @@ class AnalyticsRuntime:
         decision_config = {
             "market": {
                 "trend_title": "市场 GMV 趋势对比", "trend_format": "currency", "trend_metric": "gmv",
-                "anomaly_dimension": market_field, "anomaly_kind": "region", "anomaly_metric": "GMV",
-                "driver_dimension": "category", "driver_kind": "category", "owner": "市场运营负责人",
             },
             "product": {
                 "trend_title": "商品销量趋势对比", "trend_format": "integer", "trend_metric": "units",
-                "anomaly_dimension": "product_id", "anomaly_kind": None, "anomaly_metric": "GMV",
-                "driver_dimension": "category", "driver_kind": "category", "owner": "商品运营负责人",
             },
             "customer": {
                 "trend_title": "活跃客户趋势对比", "trend_format": "integer", "trend_metric": "customers",
-                "anomaly_dimension": "customer_id", "anomaly_kind": None, "anomaly_metric": "客户贡献",
-                "driver_dimension": market_field, "driver_kind": "region", "owner": "客户运营负责人",
             },
             "profit": {
                 "trend_title": "利润趋势对比", "trend_format": "currency", "trend_metric": "profit",
-                "anomaly_dimension": "product_id", "anomaly_kind": None, "anomaly_metric": "利润",
-                "driver_dimension": "category", "driver_kind": "category", "owner": "利润运营负责人",
             },
             "returns": {
                 "trend_title": "退货率趋势对比", "trend_format": "percent", "trend_metric": "return_rate",
-                "anomaly_dimension": "product_id", "anomaly_kind": None, "anomaly_metric": "退货率",
-                "driver_dimension": "category", "driver_kind": "category", "owner": "售后运营负责人",
             },
         }[topic]
-
-        product_names = {}
-        if "product" in bundle.results and "products" in bundle.results["product"].data:
-            products = bundle.results["product"].data["products"]
-            product_names = {
-                str(row.product_id): str(row.product_name) if pd.notna(row.product_name) else str(row.product_id)
-                for _, row in products.iterrows()
-            }
-
-        def display_name(value: Any, kind: str | None) -> str:
-            if str(value) in product_names:
-                return product_names[str(value)]
-            return _localize(value, kind) if kind else str(value)
 
         def monthly_value(frame: pd.DataFrame, month_value: str, metric_id: str) -> float | None:
             rows = frame.loc[frame.month.eq(month_value)]
@@ -1051,175 +1165,18 @@ class AnalyticsRuntime:
                 "comparison": monthly_value(comparison_source, previous_month, decision_config["trend_metric"]) if previous_month else None,
             })
 
-        def grouped_values(frame: pd.DataFrame, dimension: str, returns_mode: bool = False) -> pd.DataFrame:
-            if frame.empty or dimension not in frame:
-                return pd.DataFrame(columns=[dimension, "value", "impact_value", "orders"])
-            if returns_mode:
-                grouped = frame.groupby(dimension, dropna=False).agg(
-                    returned_orders=("_returned", "sum"), orders=("order_id", "nunique"),
-                    impact_value=("_returned_gmv", "sum"),
-                ).reset_index()
-                grouped["value"] = grouped.returned_orders / grouped.orders.where(grouped.orders.ne(0))
-                return grouped[[dimension, "value", "impact_value", "orders"]]
-            value_field = "_profit" if topic == "profit" else "_gmv"
-            grouped = frame.groupby(dimension, dropna=False).agg(
-                value=(value_field, "sum"), orders=("order_id", "nunique"),
-            ).reset_index()
-            grouped["impact_value"] = grouped.value
-            return grouped[[dimension, "value", "impact_value", "orders"]]
-
-        def comparison_by_dimension(dimension: str, kind: str | None, limit: int = 5) -> list[dict[str, Any]]:
-            returns_mode = topic == "returns"
-            current_grouped = grouped_values(current_source, dimension, returns_mode)
-            previous_grouped = grouped_values(comparison_source, dimension, returns_mode)
-            compared = current_grouped.merge(previous_grouped, on=dimension, how="outer", suffixes=("_current", "_previous"))
-            for field in ("value_current", "value_previous", "impact_value_current", "impact_value_previous", "orders_current", "orders_previous"):
-                if field in compared:
-                    compared[field] = pd.to_numeric(compared[field], errors="coerce").fillna(0.0)
-            compared["impact_amount"] = compared.impact_value_current - compared.impact_value_previous
-            compared["change_rate"] = compared.apply(lambda row: _rate(row.value_current, row.value_previous), axis=1)
-            compared["adverse_score"] = compared.impact_amount if returns_mode else -compared.impact_amount
-            adverse = compared.loc[compared.adverse_score.gt(0)].sort_values("adverse_score", ascending=False)
-            remainder = compared.loc[~compared.index.isin(adverse.index)].assign(
-                absolute_impact=lambda rows: rows.impact_amount.abs(),
-            ).sort_values("absolute_impact", ascending=False)
-            selected = pd.concat([adverse, remainder]).head(limit)
-            denominator = float(compared.impact_amount.abs().sum())
-            output = []
-            for rank, (_, row) in enumerate(selected.iterrows(), start=1):
-                output.append({
-                    "id": "{}-{}-{}".format(topic, dimension, rank),
-                    "rank": rank,
-                    "object": display_name(row[dimension], kind),
-                    "current_value": row.value_current,
-                    "comparison_value": row.value_previous,
-                    "change_rate": row.change_rate,
-                    "impact_amount": row.impact_amount,
-                    "impact_share": abs(float(row.impact_amount)) / denominator if denominator else None,
-                    "status": "需关注" if row.adverse_score > 0 else "有波动",
-                    "orders": int(row.orders_current),
-                })
-            return output
-
-        anomalies = comparison_by_dimension(
-            decision_config["anomaly_dimension"], decision_config["anomaly_kind"], 5,
-        )
-        drivers = comparison_by_dimension(
-            decision_config["driver_dimension"], decision_config["driver_kind"], 5,
-        )
-
-        current_total = monthly_value(current_source.assign(month=current_months[-1] if current_months else ""), current_months[-1], decision_config["trend_metric"]) if len(current_months) == 1 else None
-        if len(current_months) > 1:
-            if decision_config["trend_metric"] == "customers":
-                current_total = float(current_source.customer_id.nunique())
-                previous_total = float(comparison_source.customer_id.nunique())
-            elif decision_config["trend_metric"] == "return_rate":
-                current_orders = int(current_source.order_id.nunique())
-                previous_orders = int(comparison_source.order_id.nunique())
-                current_total = float(current_source._returned.sum() / current_orders) if current_orders else None
-                previous_total = float(comparison_source._returned.sum() / previous_orders) if previous_orders else None
-            else:
-                value_field = "quantity" if decision_config["trend_metric"] == "units" else "_profit" if decision_config["trend_metric"] == "profit" else "_gmv"
-                current_total = float(pd.to_numeric(current_source[value_field], errors="coerce").fillna(0).sum())
-                previous_total = float(pd.to_numeric(comparison_source[value_field], errors="coerce").fillna(0).sum())
-        else:
-            previous_total = monthly_value(comparison_source, comparison_months[-1], decision_config["trend_metric"]) if comparison_months else None
-        total_change = _rate(current_total, previous_total)
-
-        def money(value: float | None) -> str:
-            numeric = float(value or 0)
-            return "{}¥{:,.0f}".format("-" if numeric < 0 else "", abs(numeric))
-
-        def value_text(value: float | None) -> str:
-            if decision_config["trend_format"] == "percent":
-                return "{:.1%}".format(float(value or 0))
-            if decision_config["trend_format"] == "currency":
-                return money(value)
-            return "{:,.0f}".format(float(value or 0))
-
-        change_direction = "上升" if (total_change or 0) >= 0 else "下降"
-        top_anomaly = anomalies[0] if anomalies else None
-        top_driver = drivers[0] if drivers else None
-        comparison_label = "{} 至 {}".format(comparison_period["start"], comparison_period["end"])
         current_label = "{} 至 {}".format(current_period["start"], current_period["end"])
-        decision_summary = (
-            "{}从{}变为{}，较上期{}{}。".format(
-                decision_config["trend_title"].replace("趋势对比", ""), value_text(previous_total), value_text(current_total),
-                change_direction, "{:.1%}".format(abs(total_change or 0)),
-            )
-        )
-        if top_driver:
-            if topic == "returns" and top_driver["impact_amount"] > 0:
-                decision_summary += "其中，{}推高退货风险，新增关联金额{}。".format(top_driver["object"], money(top_driver["impact_amount"]))
-            elif top_driver["impact_amount"] < 0:
-                decision_summary += "其中，{}拖累结果，影响金额{}。".format(top_driver["object"], money(top_driver["impact_amount"]))
-            else:
-                decision_summary += "其中，{}贡献增长，影响金额{}。".format(top_driver["object"], money(top_driver["impact_amount"]))
-
-        findings = [{
-            "id": "period-change", "priority": "P1", "title": "整体变化",
-            "finding": decision_summary,
-        }]
-        if top_anomaly:
-            findings.append({
-                "id": "top-anomaly", "priority": "P1", "title": top_anomaly["object"],
-                "finding": "{}的{}较上期{}{}，影响金额为{}。".format(
-                    top_anomaly["object"], decision_config["anomaly_metric"],
-                    "上升" if (top_anomaly["change_rate"] or 0) >= 0 else "下降",
-                    "{:.1%}".format(abs(top_anomaly["change_rate"] or 0)), money(top_anomaly["impact_amount"]),
-                ),
-            })
-        if top_driver:
-            findings.append({
-                "id": "top-driver", "priority": "P2", "title": "主要原因",
-                "finding": "{}占全部波动影响的{:.1%}，是本期最需要先核查的驱动因素。".format(
-                    top_driver["object"], top_driver["impact_share"] or 0,
-                ),
-            })
-
-        evidence = [
-            {
-                "id": "period-total", "metric": decision_config["trend_title"].replace("趋势对比", ""),
-                "value": current_total, "unit": decision_config["trend_format"],
-                "claim": "本期{}，上期{}，变化{}。".format(value_text(current_total), value_text(previous_total), "{:+.1%}".format(total_change or 0)),
-                "formula": "本期值与上一等长周期值比较", "sample_size": int(current_source.order_id.nunique()),
-                "confidence": "高", "source_fields": "order_date, order_id, {}".format(amount),
-            },
-        ]
-        if top_anomaly:
-            evidence.append({
-                "id": "anomaly-impact", "metric": "最大异常对象", "value": top_anomaly["impact_amount"], "unit": "currency",
-                "claim": "{}影响金额{}，占不利变化的{:.1%}。".format(top_anomaly["object"], money(top_anomaly["impact_amount"]), top_anomaly["impact_share"] or 0),
-                "formula": "对象本期值 - 对象上期值", "sample_size": top_anomaly["orders"], "confidence": "高",
-                "source_fields": "{}, order_date, order_id, {}".format(decision_config["anomaly_dimension"], amount),
-            })
-        if top_driver:
-            evidence.append({
-                "id": "driver-impact", "metric": "首要驱动因素", "value": top_driver["impact_amount"], "unit": "currency",
-                "claim": "{}带来{}影响，是当前最大的可定位原因。".format(top_driver["object"], money(top_driver["impact_amount"])),
-                "formula": "分组本期值 - 分组上期值", "sample_size": top_driver["orders"], "confidence": "高",
-                "source_fields": "{}, order_date, order_id, {}".format(decision_config["driver_dimension"], amount),
-            })
-
-        action_templates = {
-            "market": ["复核{}的投放与转化", "检查{}的商品结构", "跟踪下个周期的 GMV 与利润率"],
-            "product": ["调整{}的商品结构", "复核{}的价格与库存", "跟踪下个周期的销量与退货率"],
-            "customer": ["召回{}客户", "检查{}的复购变化", "跟踪下个周期的活跃客户与人均贡献"],
-            "profit": ["收紧{}的折扣与成本", "复核{}的利润结构", "跟踪下个周期的利润与利润率"],
-            "returns": ["排查{}的退货原因", "复核{}的描述与质量反馈", "跟踪下个周期的退货率与关联 GMV"],
-        }[topic]
-        action_subjects = [
-            top_anomaly["object"] if top_anomaly else {"market": "重点市场", "product": "重点商品", "customer": "高价值客户", "profit": "亏损商品", "returns": "高退货商品"}[topic],
-            top_driver["object"] if top_driver else {"market": "重点品类", "product": "重点品类", "customer": "重点市场", "profit": "重点品类", "returns": "重点品类"}[topic],
-        ]
-        actions = [
-            {"id": "action-1", "title": action_templates[0].format(action_subjects[0]), "action": "先核对异常对象的订单、价格和履约变化，确认影响来自经营动作还是结构变化。", "owner": decision_config["owner"], "validation_period": "下一个完整可比较周期"},
-            {"id": "action-2", "title": action_templates[1].format(action_subjects[1]), "action": "按影响金额从高到低处理首要驱动因素，并记录调整前后的关键指标。", "owner": decision_config["owner"], "validation_period": "调整后 7 天"},
-            {"id": "action-3", "title": action_templates[2], "action": "下个周期复盘本期异常是否收敛；若继续恶化，升级为专项任务。", "owner": decision_config["owner"], "validation_period": "下一个完整可比较周期"},
-        ]
+        comparison_label = "{} 至 {}".format(comparison_period["start"], comparison_period["end"])
+        formal = formal_topic_decisions(bundle, topic, current_period)
+        decision_summary = formal["summary"]
+        anomalies = formal["anomalies"]
+        drivers = formal["drivers"]
+        findings = formal["findings"]
+        evidence = formal["evidence"]
+        actions = formal["actions"]
 
         decision_board = {
-            "basis": "本期 {}；上期 {}。按等长月份比较，异常按不利影响金额排序。".format(current_label, comparison_label),
+            "basis": "本期 {}；上期 {}。异常、诊断和建议仅来自正式版本化分析链路。".format(current_label, comparison_label),
             "trend": {
                 "title": decision_config["trend_title"], "format": decision_config["trend_format"],
                 "current_period": current_period, "comparison_period": comparison_period,
@@ -1230,15 +1187,10 @@ class AnalyticsRuntime:
         }
 
         detail_frame = analysis_frame.copy()
-        if search:
-            mask = detail_frame.astype(str).apply(lambda col: col.str.contains(search, case=False, na=False)).any(axis=1)
-            detail_frame = detail_frame[mask]
-        total = len(detail_frame)
-        start_index = max(0, (page - 1) * page_size)
-        details = detail_frame.iloc[start_index:start_index + page_size]
+        detail_records = _records(detail_frame)
 
         scenario = self.scenario(dataset_id)
-        filter_source = self._ensure_context().analysis_data.copy()
+        filter_source = self._context_for(dataset_id).analysis_data.copy()
         for field, values in scenario.filters.items():
             if field in filter_source:
                 filter_source = filter_source.loc[filter_source[field].astype(str).isin([str(value) for value in values])]
@@ -1256,7 +1208,7 @@ class AnalyticsRuntime:
         report = {
             "title": "{}专题分析报告".format({"market": "市场", "product": "商品", "customer": "客户", "profit": "利润", "returns": "退货"}[topic]),
             "generated_at": bundle.generated_at,
-            "period": {"start": start or self.date_bounds()[0], "end": end or self.date_bounds()[1]},
+            "period": {"start": start or self.date_bounds(dataset_id)[0], "end": end or self.date_bounds(dataset_id)[1]},
             "filters": {"market": market or "全部市场", "category": _localize(category, "category") if category else "全部品类"},
             "summary": decision_summary,
             "findings": findings,
@@ -1274,10 +1226,11 @@ class AnalyticsRuntime:
             "composition": {"title": composition_title, "format": composition_format, "rows": composition},
             "ranking": {"title": ranking_title, "format": ranking_format, "secondary_format": ranking_secondary_format, "rows": ranking},
             "columns": columns,
-            "details": _records(details),
-            "pagination": {"page": page, "page_size": page_size, "total": total, "pages": max(1, math.ceil(total / page_size))},
+            "details": [],
+            "pagination": {"page": 1, "page_size": 0, "total": 0, "pages": 1},
+            "_detail_records": detail_records,
             "filters": {
-                "start": start or self.date_bounds()[0], "end": end or self.date_bounds()[1],
+                "start": start or self.date_bounds(dataset_id)[0], "end": end or self.date_bounds(dataset_id)[1],
                 "markets": [{"value": value, "label": _localize(value, "region")} for value in market_options],
                 "categories": [{"value": value, "label": _localize(value, "category")} for value in category_options],
             },
@@ -1302,13 +1255,18 @@ class AnalyticsRuntime:
         return {"columns": data["columns"], "rows": data["details"]}, bundle
 
     def datasets(self) -> list[dict[str, Any]]:
-        start, end = self.date_bounds()
-        rows = len(self._ensure_context().analysis_data)
         items = []
-        for scenario in SCENARIOS:
-            count = rows
+        for scenario in SCENARIOS + self._imported_scenarios():
+            context = self._context_for(scenario.dataset_id)
+            start, end = self.date_bounds(scenario.dataset_id)
+            profile_frame = context.analysis_data
             for field, values in scenario.filters.items():
-                count = len(self._ensure_context().analysis_data[self._ensure_context().analysis_data[field].isin(values)])
+                profile_frame = profile_frame[profile_frame[field].isin(values)]
+            count = len(profile_frame)
+            profile_context = replace(context, analysis_data=profile_frame.copy())
+            quality, _, _, _, _, _ = assess_business_quality(
+                profile_context, scenario.dataset_id, "dataset-profile"
+            )
             items.append({
                 "dataset_id": scenario.dataset_id,
                 "name": scenario.name,
@@ -1316,21 +1274,42 @@ class AnalyticsRuntime:
                 "source_type": scenario.source_type,
                 "row_count": count,
                 "status": "READY",
-                "quality_score": 98 if scenario.dataset_id == "demo-all" else 96,
+                "quality_score": quality.quality_score,
                 "period_start": start,
                 "period_end": end,
-                "updated_at": pd.Timestamp.now().isoformat(),
-                "is_demo": True,
+                "updated_at": scenario.created_at or pd.Timestamp.now().isoformat(),
+                "is_demo": scenario.is_demo,
             })
         return items
 
     def dataset_detail(self, dataset_id: str) -> tuple[dict, Any]:
         bundle = self.bundle(dataset_id)
         scenario = self.scenario(dataset_id)
+        context = self._context_for(dataset_id)
         quality = bundle.artifacts.data_quality
         capabilities = [item.to_dict() for item in bundle.artifacts.analysis_capability]
         fields = [item.to_dict() for item in bundle.artifacts.field_quality]
         query_runs = bundle.metadata.get("query_runs", [])
+        lineage = (
+            {"source": SAMPLE.name, "scenario_filters": scenario.filters, "raw_read_only": True}
+            if scenario.is_demo else context.lineage
+        )
+        profile_frame = context.analysis_data
+        for field, values in scenario.filters.items():
+            if field in profile_frame:
+                profile_frame = profile_frame.loc[profile_frame[field].isin(values)]
+        source_files = lineage.get("source_files") if isinstance(lineage, dict) else None
+        import_history = (
+            source_files if isinstance(source_files, list) else [{
+                "source_filename": SAMPLE.name if scenario.is_demo else context.metadata.get("filename", "uploaded"),
+                "source_type": scenario.source_type,
+                "rows": len(profile_frame) if scenario.is_demo else context.metadata.get("rows"),
+                "status": "READY",
+                "created_at": scenario.created_at or context.metadata.get("created_at"),
+            }]
+        )
+        fx_rates = context.metadata.get("fx_rates")
+        fx_rate_rows = len(fx_rates) if hasattr(fx_rates, "__len__") else 0
         return _clean({
             "dataset": next(item for item in self.datasets() if item["dataset_id"] == dataset_id),
             "quality": quality.to_dict() if quality else None,
@@ -1338,21 +1317,92 @@ class AnalyticsRuntime:
             "fields": fields,
             "capabilities": capabilities,
             "query_runs": list(query_runs)[-10:],
-            "lineage": {"source": SAMPLE.name, "scenario_filters": scenario.filters, "raw_read_only": True},
+            "lineage": lineage,
+            "import_history": import_history,
+            "metric_catalog": [item.to_dict() for item in METRICS_CATALOG],
+            "rule_catalog": [item.to_dict() for item in ANOMALY_RULES],
+            "capacity": self._artifact_store().capacity(),
+            "fx_lineage": {
+                "source_currency": context.metadata.get("source_currency"),
+                "target_currency": context.metadata.get("target_currency"),
+                "fx_complete": context.metadata.get("fx_complete"),
+                "fx_provider": context.metadata.get("fx_provider"),
+                "rate_rows": fx_rate_rows,
+            },
         }), bundle
+
+    def archive_dataset(self, dataset_id: str) -> bool:
+        scenario = self.scenario(dataset_id)
+        if scenario.is_demo:
+            raise PermissionError("演示数据集不能归档")
+        archived = self._database().archive_dataset(dataset_id)
+        if archived:
+            self.clear_analysis_cache()
+        return archived
+
+    def import_dataset(
+        self,
+        loaded,
+        *,
+        mapping: dict[str, str],
+        source_file_id: str,
+        dataset_name: str,
+        data_grain: str,
+        amount_semantic: str,
+        source_currency: str | None,
+        target_currency: str,
+    ) -> dict[str, Any]:
+        return self.import_datasets(
+            [(loaded, source_file_id)],
+            mapping=mapping,
+            dataset_name=dataset_name,
+            data_grain=data_grain,
+            amount_semantic=amount_semantic,
+            source_currency=source_currency,
+            target_currency=target_currency,
+        )
+
+    def import_datasets(
+        self,
+        loaded_files: list[tuple[Any, str]],
+        *,
+        mapping: dict[str, str],
+        dataset_name: str,
+        data_grain: str,
+        amount_semantic: str,
+        source_currency: str | None,
+        target_currency: str,
+    ) -> dict[str, Any]:
+        return import_uploaded_datasets(
+            self,
+            loaded_files,
+            mapping=mapping,
+            dataset_name=dataset_name,
+            data_grain=data_grain,
+            amount_semantic=amount_semantic,
+            source_currency=source_currency,
+            target_currency=target_currency,
+        )
 
     def update_work_item(self, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if self.app_mode != "private":
             raise PermissionError("演示模式不允许永久修改任务")
-        self._work_items[item_id] = {"id": item_id, **payload}
+        normalized = normalize_work_item_patch(payload)
+        self._work_items[item_id] = {"id": item_id, **normalized}
         if self.state_store:
             self.state_store.save_work_item(item_id, self._work_items[item_id])
         return self._work_items[item_id]
 
-    def agent_context(self, dataset_id: str, question: str) -> tuple[dict[str, Any], Any]:
-        overview, bundle = self.overview(dataset_id)
+    def agent_context(
+        self, dataset_id: str, question: str, start: str | None = None,
+        end: str | None = None, market: str | None = None, category: str | None = None,
+    ) -> tuple[dict[str, Any], Any]:
+        overview, bundle = self.overview(dataset_id, start, end)
+        if market or category:
+            bundle = self.bundle(dataset_id, start, end, market, category)
         lowered = question.lower()
         tool_names = ["get_dataset_profile", "get_data_quality", "query_metrics"]
+        tool_names.extend(["get_metric", "compare_periods"])
         decision_requested = any(token in lowered for token in ("建议", "行动", "怎么办", "报告"))
         diagnosis_requested = decision_requested or any(
             token in lowered for token in ("异常", "下降", "风险", "为什么", "原因", "问题")
@@ -1360,12 +1410,49 @@ class AnalyticsRuntime:
         if diagnosis_requested:
             tool_names.extend(["list_anomalies", "get_diagnosis", "get_evidence"])
         if decision_requested:
-            tool_names.extend(["get_recommendations", "generate_review_report"])
+            tool_names.extend(["create_task", "get_recommendations", "generate_report", "generate_review_report", "explain_limitation"])
         quality = bundle.artifacts.data_quality.to_dict() if bundle.artifacts.data_quality else None
         insights = [item.to_dict() for item in bundle.artifacts.insights[:5]]
         evidence = [item.to_dict() for item in bundle.artifacts.evidence[:3]]
         recommendations = [item.to_dict() for item in bundle.artifacts.recommendations[:5]]
         decision_brief = build_decision_brief(bundle.artifacts, bundle.metadata)
+        anomaly_by_id = {item.anomaly_id: item for item in bundle.artifacts.anomalies}
+        trace = []
+        for insight in bundle.artifacts.insights[:5]:
+            anomaly = anomaly_by_id.get(insight.anomaly_id or "")
+            trace.append({
+                "insight_id": insight.insight_id,
+                "anomaly_id": insight.anomaly_id,
+                "rule_id": anomaly.rule_id if anomaly else None,
+                "rule_version": anomaly.rule_version if anomaly else None,
+                "metric_id": insight.metric_id,
+                "evidence_ids": list(insight.evidence_ids),
+            })
+        execution_context = {
+            "question": question,
+            "dataset": {
+                "dataset_id": dataset_id,
+                "name": self.scenario(dataset_id).name,
+            },
+            "period": overview["period"],
+            "filters": {"start": start, "end": end, "market": market, "category": category},
+            "scope_id": bundle.metadata.get("scope_id"),
+            "overview": overview,
+            "quality": quality,
+            "insights": insights,
+            "evidence": evidence,
+            "recommendations": recommendations,
+            "decision_brief": decision_brief,
+            "trace": trace,
+        }
+        agent_plan = self.agent_tools.plan(question, execution_context)
+        planned_tools = [
+            tool
+            for step in agent_plan
+            for tool in step.get("tools", [])
+        ]
+        tool_names = list(dict.fromkeys(planned_tools or tool_names))
+        tool_observations = self.agent_tools.execute_plan(agent_plan, execution_context)
         return _clean({
             "question": question,
             "dataset": {
@@ -1373,18 +1460,23 @@ class AnalyticsRuntime:
                 "name": self.scenario(dataset_id).name,
             },
             "period": overview["period"],
+            "filters": {"start": start, "end": end, "market": market, "category": category},
             "scope_id": bundle.metadata.get("scope_id"),
             "tools": list(dict.fromkeys(tool_names)),
+            "agent_plan": agent_plan,
             "overview": overview,
             "quality": quality,
             "insights": insights,
             "evidence": evidence,
             "recommendations": recommendations,
             "decision_brief": decision_brief,
+            "trace": trace,
+            "tool_observations": tool_observations,
         }), bundle
 
-    def export(self, dataset_id: str, report_format: str) -> tuple[Path, TemporaryDirectory]:
-        bundle = self.bundle(dataset_id)
-        temp = TemporaryDirectory(prefix="crossborder-report-")
-        paths = export_bundle(bundle, Path(temp.name))
-        return Path(paths[report_format]), temp
+    def export(
+        self, dataset_id: str, report_format: str, start: str | None = None,
+        end: str | None = None, market: str | None = None, category: str | None = None,
+        scope_id: str | None = None,
+    ):
+        return export_scoped_bundle(self, dataset_id, report_format, start, end, market, category, scope_id)

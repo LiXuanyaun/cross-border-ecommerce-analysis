@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from autoclean.analytics import AnalysisStatus
+from crossborder_analytics.database import CrossBorderDatabase
 from crossborder_analytics.service import AnalysisService
 
 
@@ -136,3 +137,47 @@ def test_empty_sql_filter_returns_zero_overview_instead_of_failing(tmp_path):
     assert result.data["orders"] == 0
     assert result.data["gmv"] == 0
     assert result.data["returned_orders"] == 0
+
+
+def test_duplicate_ready_dataset_purge_keeps_latest_source_version(tmp_path):
+    source = tmp_path / "orders.csv"
+    source.write_text(
+        "order_id,order_date,total_amount,region\nA1,2025-01-01,10,West\nA2,2025-01-02,20,West\n",
+        encoding="utf-8",
+    )
+    database = tmp_path / "ecommerce.db"
+    service = AnalysisService(cache_dir=tmp_path / "fx", database_path=database)
+    bundle = service.run(service.prepare(source, source_currency="CNY", target_currency="CNY"))
+    original_id = bundle.metadata["dataset_id"]
+    duplicate_id = "duplicate-dataset"
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO autoclean_datasets("
+            "dataset_id,table_name,contract_name,source_sha256,source_filename,row_count,"
+            "status,field_mapping_json,semantic_overrides_json,lineage_json,metadata_json,created_at"
+            ") SELECT ?,table_name,contract_name,source_sha256,source_filename,row_count,"
+            "status,field_mapping_json,semantic_overrides_json,lineage_json,metadata_json,?"
+            " FROM autoclean_datasets WHERE dataset_id=?",
+            (duplicate_id, "2020-01-01T00:00:00+00:00", original_id),
+        )
+        columns = [row[1] for row in connection.execute("PRAGMA table_info(orders)")]
+        insert_columns = ",".join('"{}"'.format(column) for column in columns)
+        select_columns = ",".join("? AS dataset_id" if column == "dataset_id" else '"{}"'.format(column) for column in columns)
+        connection.execute(
+            "INSERT INTO orders ({}) SELECT {} FROM orders WHERE dataset_id=?".format(insert_columns, select_columns),
+            (duplicate_id, original_id),
+        )
+        connection.commit()
+
+    purged = CrossBorderDatabase(database).purge_duplicate_ready_datasets()
+
+    with sqlite3.connect(database) as connection:
+        dataset_ids = {
+            row[0] for row in connection.execute("SELECT dataset_id FROM autoclean_datasets")
+        }
+        order_count = connection.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    assert purged == [duplicate_id]
+    assert original_id in dataset_ids
+    assert duplicate_id not in dataset_ids
+    assert order_count == 2

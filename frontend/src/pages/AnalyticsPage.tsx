@@ -1,7 +1,5 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
-import type { EChartsOption } from "echarts";
-import ReactECharts from "echarts-for-react";
 import {
   BarChart3,
   Boxes,
@@ -26,6 +24,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Badge, Button, Card, Drawer, EmptyState, ErrorState, Skeleton, cx } from "../components/ui";
+import { EChart, type EChartsOption } from "../components/EChart";
 import { api, queryString } from "../lib/api";
 import { useAppState } from "../state/app";
 import type {
@@ -169,6 +168,10 @@ export function AnalyticsPage() {
   });
 
   const exportUrl = `/api/v1/topics/${topic}/export${queryString({ dataset_id: datasetId, start, end, market, category, search: urlSearch })}`;
+  const activeScopeId = typeof query.data?.meta.scope_id === "string" ? query.data.meta.scope_id : "";
+  const reportQuery = queryString({ start, end, market, category, scope_id: activeScopeId });
+  const excelReportUrl = `/api/v1/reports/${datasetId}/excel${reportQuery}`;
+  const docxReportUrl = `/api/v1/reports/${datasetId}/docx${reportQuery}`;
   const active = topicConfig(topic);
   const topicData = query.data?.data;
   const categoryMap = useMemo(() => new Map((topicData?.filters.categories ?? []).map((item) => [item.value, item.label])), [topicData]);
@@ -228,6 +231,8 @@ export function AnalyticsPage() {
           report={topicData.report}
           metrics={topicData.metrics}
           exportUrl={exportUrl}
+          excelReportUrl={excelReportUrl}
+          docxReportUrl={docxReportUrl}
           color={active.color}
         />
       )}
@@ -335,7 +340,7 @@ function TopicMetricCard({ metric, color }: { metric: TopicMetric; color: string
         <p className="mt-1.5 truncate text-xl font-semibold tabular-nums">{formatTopicValue(metric.value, metric.format)}</p>
         <p className={cx("mt-1.5 text-[11px] font-medium", metric.change === null ? "text-muted" : positive ? "text-success" : "text-danger")}>{changeText(metric.change)} <span className="font-normal text-muted">较前一月</span></p>
       </div>
-      <ReactECharts option={option} style={{ width: 76, height: 42 }} notMerge lazyUpdate />
+      <EChart option={option} style={{ width: 76, height: 42 }} notMerge lazyUpdate />
     </Card>
   );
 }
@@ -383,7 +388,7 @@ function ComparisonTrend({ data, color }: { data: TopicData; color: string }) {
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div><h2 className="text-sm font-semibold">{trend.title}</h2><p className="mt-1 text-[11px] text-muted">本期 {trend.current_period.start} 至 {trend.current_period.end} · 上期 {trend.comparison_period.start} 至 {trend.comparison_period.end}</p></div>
       </div>
-      <ReactECharts option={option} style={{ height: 278 }} notMerge lazyUpdate />
+      <EChart option={option} style={{ height: 278 }} notMerge lazyUpdate />
     </Card>
   );
 }
@@ -481,7 +486,7 @@ function CompositionChart({ topic, data, color }: { topic: TopicId; data: TopicC
     <Card className="min-h-[310px] p-4">
       <div className="flex items-center gap-2"><Boxes size={16} style={{ color }} /><h2 className="text-sm font-semibold">{data.title}</h2></div>
       <div className="mt-2 grid grid-cols-[minmax(0,1fr)_124px] items-center">
-        <ReactECharts option={option} style={{ height: 236 }} notMerge lazyUpdate />
+        <EChart option={option} style={{ height: 236 }} notMerge lazyUpdate />
         <div className="space-y-2">{data.rows.slice(0, 6).map((item, index) => <div key={item.name} className="min-w-0 text-[10px]"><div className="flex items-center gap-1.5"><span className="h-2 w-2 shrink-0 rounded-sm" style={{ backgroundColor: palette[index] }} /><span className="truncate font-medium text-[#475467]">{item.name}</span></div><div className="mt-0.5 flex justify-between gap-2 pl-3.5 text-muted"><span>{item.share === null ? "不可计算" : `${(item.share * 100).toFixed(1)}%`}</span><span className="truncate tabular-nums">{compactValue(item.value, data.format)}</span></div></div>)}</div>
       </div>
     </Card>
@@ -543,7 +548,25 @@ function DetailContent({ detail, data, categoryMap }: { detail: Exclude<DetailSt
   return null;
 }
 
-function ReportPreview({ open, onOpenChange, report, metrics, exportUrl, color }: { open: boolean; onOpenChange: (open: boolean) => void; report: TopicReport; metrics: TopicMetric[]; exportUrl: string; color: string }) {
+function ReportPreview({
+  open,
+  onOpenChange,
+  report,
+  metrics,
+  exportUrl,
+  excelReportUrl,
+  docxReportUrl,
+  color,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  report: TopicReport;
+  metrics: TopicMetric[];
+  exportUrl: string;
+  excelReportUrl: string;
+  docxReportUrl: string;
+  color: string;
+}) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
@@ -555,7 +578,11 @@ function ReportPreview({ open, onOpenChange, report, metrics, exportUrl, color }
             <section className="py-5"><h3 className="text-xs font-semibold text-muted">本期结论</h3><p className="mt-2 text-sm leading-7 text-[#344054]">{report.summary}</p></section>
             <section className="grid grid-cols-2 gap-3 border-y border-line py-5 md:grid-cols-4">{metrics.map((metric) => <div key={metric.id} className="border-l-2 pl-3" style={{ borderColor: color }}><p className="text-xs text-muted">{metric.label}</p><p className="mt-1.5 text-lg font-semibold">{formatTopicValue(metric.value, metric.format)}</p></div>)}</section>
             <div className="grid gap-5 py-5 md:grid-cols-3"><ReportSection title="关键发现">{report.findings.map((item) => <ReportItem key={item.id} title={item.title} text={item.finding} />)}</ReportSection><ReportSection title="数据证据">{report.evidence.map((item) => <ReportItem key={item.id} title={item.metric} text={item.claim} />)}</ReportSection><ReportSection title="建议动作">{report.actions.map((item) => <ReportItem key={item.id} title={item.title} text={item.action} />)}</ReportSection></div>
-            <div className="flex justify-end border-t border-line pt-4"><a href={exportUrl} download className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-brand px-3 text-sm font-medium text-white hover:bg-[#075ce8]"><Download size={15} />导出当前明细</a></div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-line pt-4">
+              <a href={exportUrl} download className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-[#f8fafc]"><Download size={15} />明细 CSV</a>
+              <a href={excelReportUrl} download className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-medium text-ink hover:bg-[#f8fafc]"><Download size={15} />Excel 报告</a>
+              <a href={docxReportUrl} download className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-brand px-3 text-sm font-medium text-white hover:bg-[#075ce8]"><Download size={15} />DOCX 报告</a>
+            </div>
           </div>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>

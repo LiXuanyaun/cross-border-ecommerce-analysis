@@ -19,6 +19,7 @@ RULE_VERSION = "1.0.0"
 MARKET_MIN_ORDERS = 30
 PRODUCT_MIN_ORDERS = 10
 PRODUCT_CANDIDATE_MIN_ORDERS = 3
+PRODUCT_CANDIDATE_LIMIT = 50
 
 
 def _rate(current: float, previous: float) -> Optional[float]:
@@ -136,7 +137,7 @@ def _quality_scores(snapshots: Sequence[MetricSnapshot], current_start: str) -> 
 
 
 class OpportunityEngine:
-    def run(self, context, artifacts, legacy_results):
+    def run(self, context, artifacts):
         windows = _windows(artifacts.metric_snapshots)
         if windows is None:
             return [], [], [], {"product_candidate_min_orders": PRODUCT_CANDIDATE_MIN_ORDERS, "excluded_low_sample_products": 0}
@@ -155,7 +156,7 @@ class OpportunityEngine:
         products, excluded_low_sample_products = self._products(
             frame, previous, current, previous_window, current_window,
             context.metadata.get("dataset_id") or artifacts.data_quality.dataset_id,
-            artifacts.data_quality.scope_id, evidence_ids, legacy_results, created_at,
+            artifacts.data_quality.scope_id, evidence_ids, created_at,
         )
         actions = self._actions(markets, products, created_at)
         summary = {
@@ -251,7 +252,7 @@ class OpportunityEngine:
 
     def _products(
         self, frame, previous, current, previous_window, current_window,
-        dataset_id, scope_id, evidence_ids, legacy_results, created_at,
+        dataset_id, scope_id, evidence_ids, created_at,
     ) -> List[ProductOpportunity]:
         if "product_id" not in frame:
             return []
@@ -263,15 +264,25 @@ class OpportunityEngine:
         candidate_mask = (paired.orders_previous + paired.orders_current).ge(PRODUCT_CANDIDATE_MIN_ORDERS)
         excluded_low_sample_products = int((~candidate_mask).sum())
         paired = paired.loc[candidate_mask].copy()
-        product_result = legacy_results.get("product")
-        product_table = product_result.data.get("products", pd.DataFrame()) if product_result and product_result.data else pd.DataFrame()
-        status_map = product_table.set_index(product_table.product_id.astype(str))["classification"].to_dict() if not product_table.empty else {}
-        name_map = frame.groupby(frame.product_id.astype(str))["product_name"].first().to_dict() if "product_name" in frame else {}
-        category_map = frame.groupby(frame.product_id.astype(str))["category"].agg(lambda values: values.mode().iloc[0] if not values.mode().empty else "未标注品类").to_dict() if "category" in frame else {}
+        if len(paired) > PRODUCT_CANDIDATE_LIMIT:
+            paired["candidate_value"] = paired.gmv_current.fillna(0).abs() + paired.gmv_previous.fillna(0).abs()
+            paired = paired.nlargest(PRODUCT_CANDIDATE_LIMIT, "candidate_value").drop(columns=["candidate_value"])
+        status_map = {}
+        candidate_skus = set(paired.sku.astype(str))
+        candidate_frame = frame.loc[frame.product_id.astype(str).isin(candidate_skus)]
+        name_map = candidate_frame.groupby(candidate_frame.product_id.astype(str))["product_name"].first().to_dict() if "product_name" in candidate_frame else {}
+        category_map = {}
+        if "category" in candidate_frame and not candidate_frame.empty:
+            category_counts = (
+                candidate_frame.assign(__sku=candidate_frame.product_id.astype(str))
+                .groupby(["__sku", "category"], dropna=False).size().rename("rows").reset_index()
+                .sort_values(["__sku", "rows", "category"], ascending=[True, False, True])
+                .drop_duplicates("__sku")
+            )
+            category_map = category_counts.set_index("__sku")["category"].fillna("未标注品类").astype(str).to_dict()
         current_by_sku = {str(key): group for key, group in current.groupby("sku", sort=False)}
         previous_by_sku = {str(key): group for key, group in previous.groupby("sku", sort=False)}
-        customer_result = legacy_results.get("customer")
-        customer_table = customer_result.data.get("customers", pd.DataFrame()) if customer_result and customer_result.data else pd.DataFrame()
+        customer_table = pd.DataFrame()
         high_value_customers = set()
         customer_segment_map: Dict[str, str] = {}
         if not customer_table.empty and {"customer_id", "segment"}.issubset(customer_table.columns):
@@ -328,7 +339,7 @@ class OpportunityEngine:
             if high_value_customers and "customer_id" in current_sku:
                 sku_amount = amount_column(current_sku)
                 high_value_share = _ratio(
-                    current_sku.loc[current_sku.customer_id.astype(str).isin(high_value_customers), sku_amount].sum(),
+                    current_sku.loc[current_sku.customer_id.astype(str).map(high_value_customers.__contains__), sku_amount].sum(),
                     current_sku[sku_amount].sum(),
                 )
                 customer_mix = current_sku.assign(
@@ -337,7 +348,7 @@ class OpportunityEngine:
                 if not customer_mix.empty:
                     primary_customer_group = str(customer_mix.index[0])
             bundle_share = _ratio(
-                current_sku.order_id.astype(str).isin(multi_product_orders).sum(), len(current_sku)
+                current_sku.order_id.astype(str).map(multi_product_orders.__contains__).sum(), len(current_sku)
             ) if multi_product_orders else None
             missing_quality = not {"profit_amount", "returned"}.issubset(frame.columns)
             sample_low = int(row.orders_current) < PRODUCT_MIN_ORDERS or int(row.orders_previous) < PRODUCT_MIN_ORDERS

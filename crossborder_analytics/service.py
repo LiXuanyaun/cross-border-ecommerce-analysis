@@ -24,8 +24,7 @@ from autoclean.analytics import (
 from .contract import ECOMMERCE_CONTRACT, domain_issues
 from .database import CrossBorderDatabase, SQLAnalysisRepository
 from .decision import resolve_market_field
-from .modules import build_modules
-from .recommendations import build_recommendations
+from .modules import amount_column, build_modules
 from .data_quality import assess_business_quality
 from .metrics import MetricsEngine, build_scope_id
 from .phase2_catalogs import ANOMALY_RULES, METRICS_CATALOG, RECOMMENDATION_RULES
@@ -38,6 +37,10 @@ from .anomalies import RulesEngine
 from .diagnosis import DiagnosisEngine
 from .recommendations_v2 import RecommendationEngine
 from .insights import InsightEngine
+
+
+class AnalysisPipelineError(RuntimeError):
+    """A failed analysis must be visible to callers, never silently downgraded."""
 
 
 def _apply_metric_snapshot_adapter(bundle, snapshots) -> None:
@@ -81,14 +84,12 @@ class AnalysisService:
         cache_dir: Optional[Any] = None,
         database_path: Optional[Any] = "database/ecommerce.db",
         backend: str = "sql",
-        enable_phase2: bool = True,
     ):
         self.cache_dir = cache_dir
         if backend not in {"sql", "pandas"}:
             raise ValueError("backend must be 'sql' or 'pandas'")
         self.backend = backend
         self.database_path = database_path
-        self.enable_phase2 = bool(enable_phase2)
 
     def prepare(
         self,
@@ -101,9 +102,28 @@ class AnalysisService:
         online_fx: bool = True,
     ):
         loaded = load_tabular(source, filename=filename)
+        return self.prepare_loaded(
+            loaded,
+            mapping=mapping,
+            source_currency=source_currency,
+            target_currency=target_currency,
+            fx_rates=fx_rates,
+            online_fx=online_fx,
+        )
+
+    def prepare_loaded(
+        self,
+        loaded,
+        mapping: Optional[Mapping[str, str]] = None,
+        source_currency: Optional[str] = None,
+        target_currency: str = "CNY",
+        fx_rates: Optional[Any] = None,
+        online_fx: bool = True,
+        contract=None,
+    ):
         context = prepare_context(
             loaded,
-            ECOMMERCE_CONTRACT,
+            contract or ECOMMERCE_CONTRACT,
             mapping=mapping,
             semantic_overrides={"profit_amount": "order_profit_amount"},
         )
@@ -126,7 +146,10 @@ class AnalysisService:
         elif source_currency:
             frame["currency"] = frame["currency"].fillna(source_currency.upper())
 
-        amount_fields = [field for field in ("price", "total_amount", "shipping_cost", "profit_amount") if field in frame]
+        amount_fields = [
+            field for field in ("price", "total_amount", "shipping_cost", "profit_amount", "cost_amount", "refund_amount", "ad_spend")
+            if field in frame
+        ]
         providers = []
         if fx_rates is not None:
             providers.append(CsvFxProvider(fx_rates))
@@ -205,7 +228,6 @@ class AnalysisService:
                     },
                     generated_at=pd.Timestamp.now(tz="UTC").isoformat(),
                 )
-                bundle.recommendations = []
                 return CrossBorderAnalysisBundle(bundle, AnalysisArtifacts())
         elif self.backend == "pandas":
             run_context.metadata["analysis_backend"] = "pandas"
@@ -216,7 +238,13 @@ class AnalysisService:
         phase2_scope_id = build_scope_id(
             phase2_dataset_id, request, context.metadata.get("target_currency") or ""
         )
-        if self.enable_phase2 and not run_context.fatal_issues:
+        store = (
+            ArtifactStore(self.database_path)
+            if self.backend == "sql" and self.database_path is not None and not run_context.fatal_issues
+            else None
+        )
+        cached_artifacts = store.load(phase2_scope_id) if store else None
+        if not run_context.fatal_issues and cached_artifacts is None:
             phase2_quality = assess_business_quality(context, phase2_dataset_id, phase2_scope_id)
             if self.backend == "sql" and run_context.metadata.get("fx_complete") is not False:
                 phase2_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="phase2-metrics")
@@ -230,13 +258,12 @@ class AnalysisService:
                 context=run_context,
                 results={
                     module.name: ModuleResult(module.name, AnalysisStatus.SKIPPED, message=message)
-                    for module in build_modules(repository)
+                    for module in build_modules(repository, request.topic)
                 },
                 generated_at=pd.Timestamp.now(tz="UTC").isoformat(),
             )
         else:
-            bundle = PipelineRunner(build_modules(repository)).run(run_context)
-        bundle.recommendations = build_recommendations(bundle)
+            bundle = PipelineRunner(build_modules(repository, request.topic)).run(run_context)
         bundle.metadata.update({
             "filters": applied,
             "fx_rates": context.metadata.get("fx_rates", pd.DataFrame()),
@@ -251,8 +278,15 @@ class AnalysisService:
             ],
             "artifact_store_path": str(Path(self.database_path).resolve()) if self.database_path is not None else None,
         })
-        if not self.enable_phase2:
-            return CrossBorderAnalysisBundle(bundle, AnalysisArtifacts())
+        if cached_artifacts is not None:
+            run_context.metadata["scope_cache"] = "HIT"
+            bundle.metadata.update({
+                "scope_id": phase2_scope_id,
+                "analysis_request": request.to_dict(),
+                "scope_cache": "HIT",
+            })
+            _apply_metric_snapshot_adapter(bundle, cached_artifacts.metric_snapshots)
+            return CrossBorderAnalysisBundle(bundle, cached_artifacts)
         artifacts = AnalysisArtifacts(metric_definitions=list(METRICS_CATALOG))
         artifacts.anomaly_rules = list(ANOMALY_RULES)
         artifacts.recommendation_rules = list(RECOMMENDATION_RULES)
@@ -270,7 +304,6 @@ class AnalysisService:
                 artifacts.unsupported_conclusions,
             ) = quality
             return CrossBorderAnalysisBundle(bundle, artifacts)
-        store = ArtifactStore(self.database_path) if self.backend == "sql" and self.database_path is not None else None
         if store:
             store.begin_run(scope_id, dataset_id, request, {
                 "metrics": "1.0.0", "anomaly_rules": "1.0.0",
@@ -309,12 +342,13 @@ class AnalysisService:
                     artifacts.anomalies, artifacts.diagnoses, artifacts.recommendations,
                     artifacts.data_quality, artifacts.analysis_capability,
                 )
-                (
-                    artifacts.market_opportunities,
-                    artifacts.product_opportunities,
-                    artifacts.action_items,
-                    artifacts.opportunity_summary,
-                ) = OpportunityEngine().run(run_context, artifacts, bundle.results)
+                if request.analysis_mode == "full":
+                    (
+                        artifacts.market_opportunities,
+                        artifacts.product_opportunities,
+                        artifacts.action_items,
+                        artifacts.opportunity_summary,
+                    ) = OpportunityEngine().run(run_context, artifacts)
                 _apply_metric_snapshot_adapter(bundle, snapshots)
             if store:
                 store.save(scope_id, artifacts)
@@ -322,12 +356,9 @@ class AnalysisService:
         except Exception as exc:
             if store:
                 store.fail_run(scope_id, exc)
-            bundle.results["phase2"] = ModuleResult(
-                "phase2", AnalysisStatus.FAILED,
-                message="Phase 2 analysis failed: {}".format(exc),
-                error_type=type(exc).__name__,
-            )
-            bundle.metadata["phase2_error"] = str(exc)
+            raise AnalysisPipelineError(
+                "Phase 2 analysis failed for scope {}: {}".format(scope_id, exc)
+            ) from exc
         finally:
             if phase2_executor is not None:
                 phase2_executor.shutdown(wait=True)
@@ -372,7 +403,7 @@ class AnalysisService:
             frame = frame.loc[frame.product_id.astype(str).eq(product_id)].copy()
             summary_frame = product_row.copy()
             frame["month"] = frame.order_date.dt.to_period("M").astype(str)
-            amount = "total_amount_base" if "total_amount_base" in frame else "total_amount"
+            amount = amount_column(frame)
             monthly_agg = {"orders": ("order_id", "nunique"), "gmv": (amount, "sum")}
             if "quantity" in frame:
                 monthly_agg["units"] = ("quantity", "sum")
@@ -455,7 +486,6 @@ def analyze_file(
         cache_dir=kwargs.pop("cache_dir", None),
         database_path=kwargs.pop("database_path", "database/ecommerce.db"),
         backend=kwargs.pop("backend", "sql"),
-        enable_phase2=kwargs.pop("enable_phase2", True),
     )
     request = kwargs.pop("request", None)
     context = service.prepare(

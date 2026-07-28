@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 T = TypeVar("T")
-ApiStatus = Literal["SUCCESS", "SKIPPED", "FAILED", "FATAL"]
+ApiStatus = Literal["SUCCESS", "PARTIAL", "SKIPPED", "FAILED", "FATAL"]
 
 
 class ApiMeta(BaseModel):
@@ -25,10 +25,13 @@ class ApiEnvelope(BaseModel, Generic[T]):
 
 
 class WorkItemPatch(BaseModel):
-    workflow_status: Literal["TODO", "IN_PROGRESS", "REVIEW", "COMPLETED", "DISMISSED", "WAITING_DATA"]
+    workflow_status: Literal["TODO", "IN_PROGRESS", "COMPLETED", "REVIEWED", "CLOSED"]
     owner: str = ""
-    due_date: str | None = None
-    resolution_note: str = ""
+    deadline: str | None = None
+    result_note: str = ""
+    review_result: str = ""
+    close_reason: str = ""
+    closed_by: str = ""
 
 
 class AgentSessionRequest(BaseModel):
@@ -38,6 +41,10 @@ class AgentSessionRequest(BaseModel):
 class AgentRunRequest(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
     dataset_id: str = "demo-all"
+    start: str | None = None
+    end: str | None = None
+    market: str | None = None
+    category: str | None = None
 
 
 class ProviderStatus(BaseModel):

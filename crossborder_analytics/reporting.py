@@ -680,10 +680,13 @@ def export_bundle(
         include_action_details,
     )
     artifacts = getattr(bundle, "artifacts", None)
+    scope_id = bundle.metadata.get("scope_id")
     manifest = {
         "project": "CrossBorder AI Analytics",
-        "version": "2.5.0",
+        "version": "3.1.0",
         "generated_at": bundle.generated_at,
+        "scope_id": scope_id,
+        "analysis_request": bundle.metadata.get("analysis_request", {}),
         "source": bundle.context.lineage,
         "metadata": {key: value for key, value in bundle.context.metadata.items() if key != "fx_rates"},
         "filters": bundle.metadata.get("filters", {}),

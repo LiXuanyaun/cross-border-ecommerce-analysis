@@ -40,13 +40,20 @@ def _metric(
 
 
 METRICS_CATALOG = (
-    _metric("gmv", "GMV（成交总额）", "所选范围内的订单成交金额", "SUM(total_amount_base)", unit="currency", required=("order_id", "total_amount"), currency_policy="target_currency_with_full_fx_coverage"),
+    _metric("gmv", "GMV（成交总额）", "所选范围内按确认金额语义计算的成交金额", "SUM(gmv_amount_base)", unit="currency", required=("order_id", "total_amount"), currency_policy="target_currency_with_full_fx_coverage"),
     _metric("orders", "订单数", "唯一订单数量", "COUNT(order_id)", required=("order_id",)),
     _metric("aov", "AOV（平均客单价）", "每笔订单的平均成交金额", "gmv / orders", numerator="gmv", denominator="orders", unit="currency", required=("order_id", "total_amount"), currency_policy="target_currency_with_full_fx_coverage"),
     _metric("units", "销量", "所选范围内的商品数量", "SUM(quantity)", required=("quantity",)),
     _metric("customers", "客户数", "唯一客户数量", "COUNT(DISTINCT customer_id)", required=("customer_id",), dimensions=("global", "market"), capability="customer_analysis"),
     _metric("profit", "利润", "订单利润额合计", "SUM(profit_amount_base)", unit="currency", required=("profit_amount",), capability="profit_analysis", currency_policy="target_currency_with_full_fx_coverage"),
     _metric("profit_margin", "利润率", "利润占 GMV 的比例", "profit / gmv", numerator="profit", denominator="gmv", unit="ratio", required=("profit_amount", "total_amount"), capability="profit_analysis"),
+    _metric("cost_amount", "成本", "订单成本合计", "SUM(cost_amount_base)", unit="currency", required=("cost_amount",), capability="commercial_attribution", currency_policy="target_currency_with_full_fx_coverage"),
+    _metric("refund_amount", "退款金额", "退款金额合计", "SUM(refund_amount_base)", unit="currency", required=("refund_amount",), capability="commercial_attribution", currency_policy="target_currency_with_full_fx_coverage"),
+    _metric("ad_spend", "广告花费", "广告花费合计", "SUM(ad_spend_base)", unit="currency", required=("ad_spend",), capability="commercial_attribution", currency_policy="target_currency_with_full_fx_coverage"),
+    _metric("roas", "ROAS", "广告投入产出比", "gmv / ad_spend", numerator="gmv", denominator="ad_spend", unit="ratio", required=("ad_spend", "total_amount"), capability="commercial_attribution", currency_policy="target_currency_with_full_fx_coverage"),
+    _metric("net_profit", "净利润", "扣除退款和广告后的净利润", "profit - refund - ad_spend", unit="currency", required=("profit_amount", "refund_amount", "ad_spend"), capability="commercial_attribution", currency_policy="target_currency_with_full_fx_coverage"),
+    _metric("inventory_available", "可用库存", "可用库存数量合计", "SUM(inventory_available)", unit="count", required=("inventory_available",), capability="commercial_attribution"),
+    _metric("stockout_rate", "缺货率", "缺货订单占订单数的比例", "stockout_orders / orders", numerator="stockout_orders", denominator="orders", unit="ratio", required=("stockout_flag", "order_id"), capability="commercial_attribution"),
     _metric("return_rate", "退货率", "退货订单占订单数的比例", "returned_orders / orders", numerator="returned_orders", denominator="orders", unit="ratio", required=("returned", "order_id"), capability="return_analysis"),
     _metric("growth_rate", "增长率", "当前值相对上一完整等长周期的变化", "(current - previous) / ABS(previous)", numerator="current_minus_previous", denominator="abs_previous", unit="ratio", required=("order_date",), capability="sales_analysis"),
     _metric("product_contribution", "商品贡献率", "SKU GMV 占筛选范围总 GMV 的比例", "product_gmv / filtered_total_gmv", numerator="product_gmv", denominator="filtered_total_gmv", unit="ratio", required=("product_id", "total_amount"), dimensions=("sku",), capability="product_analysis"),

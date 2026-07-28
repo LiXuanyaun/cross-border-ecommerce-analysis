@@ -72,6 +72,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/topics/{topic}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Export Topic Details */
+        get: operations["export_topic_details_api_v1_topics__topic__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/datasets": {
         parameters: {
             query?: never;
@@ -106,6 +123,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/imports/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Preview */
+        post: operations["import_preview_api_v1_imports_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Commit Import */
+        post: operations["commit_import_api_v1_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/work-items/{item_id}": {
         parameters: {
             query?: never;
@@ -121,6 +172,57 @@ export interface paths {
         head?: never;
         /** Update Work Item */
         patch: operations["update_work_item_api_v1_work_items__item_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/scopes/capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Scope Capacity */
+        get: operations["scope_capacity_api_v1_scopes_capacity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scopes/{scope_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Scope */
+        post: operations["archive_scope_api_v1_scopes__scope_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Cleanup Scopes */
+        delete: operations["cleanup_scopes_api_v1_scopes_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/agent/status": {
@@ -238,6 +340,14 @@ export interface components {
              * @default demo-all
              */
             dataset_id: string;
+            /** Start */
+            start?: string | null;
+            /** End */
+            end?: string | null;
+            /** Market */
+            market?: string | null;
+            /** Category */
+            category?: string | null;
         };
         /** AgentSessionRequest */
         AgentSessionRequest: {
@@ -246,6 +356,90 @@ export interface components {
              * @default demo-all
              */
             dataset_id: string;
+        };
+        /** ApiEnvelope[dict[str, Any]] */
+        ApiEnvelope_dict_str__Any__: {
+            /**
+             * Status
+             * @default SUCCESS
+             * @enum {string}
+             */
+            status: "SUCCESS" | "PARTIAL" | "SKIPPED" | "FAILED" | "FATAL";
+            /** Data */
+            data: {
+                [key: string]: unknown;
+            };
+            meta?: components["schemas"]["ApiMeta"];
+            /** Limitations */
+            limitations?: string[];
+        };
+        /** ApiEnvelope[list[dict[str, Any]]] */
+        ApiEnvelope_list_dict_str__Any___: {
+            /**
+             * Status
+             * @default SUCCESS
+             * @enum {string}
+             */
+            status: "SUCCESS" | "PARTIAL" | "SKIPPED" | "FAILED" | "FATAL";
+            /** Data */
+            data: {
+                [key: string]: unknown;
+            }[];
+            meta?: components["schemas"]["ApiMeta"];
+            /** Limitations */
+            limitations?: string[];
+        };
+        /** ApiMeta */
+        ApiMeta: {
+            /** Dataset Id */
+            dataset_id?: string | null;
+            /** Scope Id */
+            scope_id?: string | null;
+            /** Generated At */
+            generated_at?: string | null;
+            /** Quality Rating */
+            quality_rating?: string | null;
+            /**
+             * App Mode
+             * @default demo
+             */
+            app_mode: string;
+        };
+        /** Body_commit_import_api_v1_imports_post */
+        Body_commit_import_api_v1_imports_post: {
+            /** Files */
+            files?: string[] | null;
+            /** File */
+            file?: string | null;
+            /** Mapping Json */
+            mapping_json: string;
+            /**
+             * Dataset Name
+             * @default
+             */
+            dataset_name: string;
+            /** Selected Sheet */
+            selected_sheet?: string | null;
+            /** Data Grain */
+            data_grain: string;
+            /** Amount Semantic */
+            amount_semantic: string;
+            /** Source Currency */
+            source_currency?: string | null;
+            /**
+             * Target Currency
+             * @default CNY
+             */
+            target_currency: string;
+            /** Selected Sheets Json */
+            selected_sheets_json?: string | null;
+        };
+        /** Body_import_preview_api_v1_imports_preview_post */
+        Body_import_preview_api_v1_imports_preview_post: {
+            /** Files */
+            files: string[];
+            /** Selected Sheets Json */
+            selected_sheets_json?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -271,19 +465,34 @@ export interface components {
              * Workflow Status
              * @enum {string}
              */
-            workflow_status: "TODO" | "IN_PROGRESS" | "REVIEW" | "COMPLETED" | "DISMISSED" | "WAITING_DATA";
+            workflow_status: "TODO" | "IN_PROGRESS" | "COMPLETED" | "REVIEWED" | "CLOSED";
             /**
              * Owner
              * @default
              */
             owner: string;
-            /** Due Date */
-            due_date?: string | null;
+            /** Deadline */
+            deadline?: string | null;
             /**
-             * Resolution Note
+             * Result Note
              * @default
              */
-            resolution_note: string;
+            result_note: string;
+            /**
+             * Review Result
+             * @default
+             */
+            review_result: string;
+            /**
+             * Close Reason
+             * @default
+             */
+            close_reason: string;
+            /**
+             * Closed By
+             * @default
+             */
+            closed_by: string;
         };
     };
     responses: never;
@@ -353,7 +562,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
                 };
             };
             /** @description Validation Error */
@@ -378,6 +587,44 @@ export interface operations {
                 search?: string;
                 page?: number;
                 page_size?: number;
+            };
+            header?: never;
+            path: {
+                topic: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_topic_details_api_v1_topics__topic__export_get: {
+        parameters: {
+            query?: {
+                dataset_id?: string;
+                start?: string | null;
+                end?: string | null;
+                market?: string | null;
+                category?: string | null;
+                search?: string;
             };
             header?: never;
             path: {
@@ -422,7 +669,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApiEnvelope_list_dict_str__Any___"];
                 };
             };
         };
@@ -437,6 +684,72 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_preview_api_v1_imports_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_preview_api_v1_imports_preview_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    commit_import_api_v1_imports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_commit_import_api_v1_imports_post"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -479,6 +792,88 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    scope_capacity_api_v1_scopes_capacity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    archive_scope_api_v1_scopes__scope_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cleanup_scopes_api_v1_scopes_delete: {
+        parameters: {
+            query?: {
+                keep_latest?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": unknown;
                 };
             };
@@ -508,7 +903,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
                 };
             };
         };
@@ -552,7 +947,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
                 };
             };
             /** @description Validation Error */
@@ -587,7 +982,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
                 };
             };
             /** @description Validation Error */
@@ -634,7 +1029,13 @@ export interface operations {
     };
     report_api_v1_reports__dataset_id___report_format__get: {
         parameters: {
-            query?: never;
+            query?: {
+                start?: string | null;
+                end?: string | null;
+                market?: string | null;
+                category?: string | null;
+                scope_id?: string | null;
+            };
             header?: never;
             path: {
                 dataset_id: string;

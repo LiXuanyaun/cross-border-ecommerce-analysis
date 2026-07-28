@@ -28,6 +28,16 @@ FIELD_MEANINGS = {
     "region": ("区域", "在国家不可用时支持区域市场分析"),
     "quantity": ("商品数量", "支持销量分析"),
     "profit_amount": ("订单利润", "支持利润、利润率和增长质量判断"),
+    "cost_amount": ("订单成本", "支持净利润和毛利分析"),
+    "refund_amount": ("退款金额", "支持真实退款损失分析"),
+    "ad_spend": ("广告花费", "支持 ROAS 和广告投入效率分析"),
+    "campaign_id": ("活动 ID", "支持活动归因分析"),
+    "inventory_available": ("可用库存", "支持库存缺货影响分析"),
+    "stockout_flag": ("缺货标记", "支持缺货率和库存风险分析"),
+    "return_reason": ("退货原因", "支持退货原因归因"),
+    "shipping_status": ("发货状态", "支持履约与发货归因"),
+    "channel": ("渠道", "支持渠道组合分析"),
+    "store_id": ("店铺 ID", "支持店铺组合分析"),
     "returned": ("退货状态", "支持退货率和风险暴露分析"),
     "shipping_cost": ("物流成本", "支持履约成本分析"),
     "delivery_time_days": ("配送时长", "支持履约体验分析"),
@@ -71,11 +81,24 @@ def build_capability_map(context) -> List[AnalysisCapability]:
         ("商品销售排行",) if "product_id" in frame else (),
     ))
 
-    product_supported = ["商品销量和销售贡献"] if {"product_id", "total_amount"}.issubset(frame) else []
+    order_total_lines = (
+        context.metadata.get("data_grain") == "order_item"
+        and context.metadata.get("amount_semantic") == "order_total"
+    )
+    product_supported = ["商品销量"] if "product_id" in frame else []
+    if {"product_id", "total_amount"}.issubset(frame) and not order_total_lines:
+        product_supported.append("商品销售贡献")
     product_unsupported = [] if _field_complete(frame, "profit_amount") else ["商品利润贡献"]
+    if order_total_lines:
+        product_unsupported.append("商品 GMV 贡献")
     capabilities.append(_capability(
         "product_analysis", "商品分析", product_supported, product_unsupported,
-        (() if _field_complete(frame, "profit_amount") else ("缺少或利润字段完整率低于 80%",)),
+        tuple(
+            reason for reason in (
+                None if _field_complete(frame, "profit_amount") else "缺少或利润字段完整率低于 80%",
+                "订单总金额重复在商品行，无法无损分摊到 SKU" if order_total_lines else None,
+            ) if reason
+        ),
         ("商品分析",), ("销售趋势",),
     ))
 
@@ -85,6 +108,36 @@ def build_capability_map(context) -> List[AnalysisCapability]:
         [] if profit_ready else ["利润率、高销售低利润商品和市场利润质量"],
         (() if profit_ready else ("缺少或利润字段完整率低于 80%",)),
         ("利润分析", "商品分析", "市场分析"), ("GMV", "订单数"),
+    ))
+
+    commercial_fields = [
+        "cost_amount",
+        "refund_amount",
+        "ad_spend",
+        "campaign_id",
+        "inventory_available",
+        "stockout_flag",
+        "return_reason",
+        "shipping_status",
+        "channel",
+        "store_id",
+    ]
+    commercial_present = [field for field in commercial_fields if _field_complete(frame, field, 0.5)]
+    commercial_missing = [field for field in ("cost_amount", "refund_amount", "ad_spend") if not _field_complete(frame, field)]
+    capabilities.append(_capability(
+        "commercial_attribution", "商业归因", ["净利润、退款、广告和库存归因"] if commercial_present else [],
+        [] if commercial_present else ["净利润、退款、广告和库存归因"],
+        tuple(
+            reason for reason in (
+                None if _field_complete(frame, "cost_amount") else "缺少成本字段",
+                None if _field_complete(frame, "refund_amount") else "缺少退款字段",
+                None if _field_complete(frame, "ad_spend") else "缺少广告花费字段",
+                None if _field_complete(frame, "inventory_available") and _field_complete(frame, "stockout_flag") else "库存可用量或缺货字段不足",
+                None if _field_complete(frame, "return_reason") else "缺少退货原因字段",
+                None if _field_complete(frame, "campaign_id") or _field_complete(frame, "channel") or _field_complete(frame, "store_id") else "缺少活动、渠道或店铺维度",
+            ) if reason
+        ),
+        ("利润分析", "商品分析", "市场分析", "退货分析", "库存分析"), ("GMV", "订单数"),
     ))
 
     customer_supported = ["客户数和客户构成"] if customers else []
@@ -108,7 +161,7 @@ def build_capability_map(context) -> List[AnalysisCapability]:
         "return_analysis", "退货风险", ["退货率和退货关联 GMV"] if return_ready else [],
         [] if return_ready else ["高退货商品和高风险市场"],
         (() if return_ready else ("缺少或退货字段完整率低于 80%",)),
-        ("退货与运营",), ("GMV", "利润分析") if profit_ready else ("GMV",),
+        ("退货与运营",), ("GMV", "利润分析", "商业归因") if profit_ready else ("GMV",),
     ))
 
     quality_supported = market_supported and profit_ready and return_ready
@@ -132,6 +185,16 @@ def build_improvement_plan(context, capabilities: Sequence[AnalysisCapability]) 
     frame = context.analysis_data
     candidates = (
         ("profit_amount", "P0", "补充 SKU 成本或订单利润", "利润与增长质量判断不可用", ("利润分析", "商品盈利分析", "市场增长质量")),
+        ("cost_amount", "P1", "补充订单成本", "净利润和毛利判断不可用", ("净利润", "毛利分析", "广告投放效率")),
+        ("refund_amount", "P1", "补充退款金额", "真实退款损失不可见", ("退款损失", "退货原因归因")),
+        ("ad_spend", "P1", "补充广告花费", "ROAS 和广告效率不可见", ("ROAS", "广告投入效率")),
+        ("inventory_available", "P2", "补充可用库存", "库存缺货影响不可见", ("库存缺货分析", "补货优先级")),
+        ("stockout_flag", "P2", "补充缺货标记", "缺货率不可见", ("库存缺货分析", "库存预警")),
+        ("campaign_id", "P2", "补充活动 ID", "活动归因不可见", ("活动增量", "投放归因")),
+        ("return_reason", "P2", "补充退货原因", "退货原因归因不可见", ("退货原因分析",)),
+        ("shipping_status", "P3", "补充发货状态", "履约归因不可见", ("履约质量",)),
+        ("channel", "P3", "补充渠道字段", "渠道组合分析不可见", ("渠道分析",)),
+        ("store_id", "P3", "补充店铺字段", "店铺组合分析不可见", ("店铺分析",)),
         ("customer_id", "P1", "补充稳定客户 ID", "客户价值和复购判断不可用", ("RFM", "复购分析", "高价值客户识别")),
         ("returned", "P2", "补充退货状态", "退货风险判断不可用", ("高退货商品", "高风险市场")),
         ("shipping_cost", "P3", "补充物流成本", "履约成本不可见", ("物流成本分析", "市场履约质量")),

@@ -177,7 +177,11 @@ class AgentManager:
             self.state.save_session(self.sessions[session_id])
         return self.sessions[session_id]
 
-    def start(self, session_id: str, dataset_id: str, question: str) -> str:
+    def start(
+        self, session_id: str, dataset_id: str, question: str,
+        start: str | None = None, end: str | None = None,
+        market: str | None = None, category: str | None = None,
+    ) -> str:
         self._cleanup_expired()
         if session_id not in self.sessions:
             raise KeyError(session_id)
@@ -188,7 +192,7 @@ class AgentManager:
         self._run_sessions[run_id] = session_id
         if self.state:
             self.state.save_run(run_id, session_id, dataset_id, question)
-        asyncio.create_task(self._execute(run_id, session_id, dataset_id, question))
+        asyncio.create_task(self._execute(run_id, session_id, dataset_id, question, start, end, market, category))
         return run_id
 
     def _emit(self, run_id: str, event_type: str, payload: dict[str, Any]) -> None:
@@ -197,25 +201,41 @@ class AgentManager:
         if self.state:
             self.state.save_event(run_id, len(self.runs[run_id]) - 1, event)
 
-    async def _execute(self, run_id: str, session_id: str, dataset_id: str, question: str) -> None:
-        run_status = "COMPLETED"
+    async def _execute(
+        self, run_id: str, session_id: str, dataset_id: str, question: str,
+        start: str | None = None, end: str | None = None,
+        market: str | None = None, category: str | None = None,
+    ) -> None:
+        run_status = "SUCCESS"
         try:
             self._emit(run_id, "stage", {"stage": "理解问题", "status": "completed"})
-            context, bundle = await asyncio.to_thread(self.runtime.agent_context, dataset_id, question)
+            context, bundle = await asyncio.to_thread(
+                self.runtime.agent_context, dataset_id, question, start, end, market, category,
+            )
+            context["conversation"] = self.sessions[session_id].get("messages", [])[-6:]
+            self._emit(run_id, "plan", {"steps": context.get("agent_plan", [])})
             self._emit(run_id, "stage", {"stage": "数据分析", "status": "running"})
+            observations = {item["tool"]: item for item in context.get("tool_observations", []) if item.get("tool")}
             for tool in context["tools"]:
-                self._emit(run_id, "tool", {"name": tool, "status": "completed"})
+                observation = observations.get(tool, {"tool": tool, "status": "SKIPPED", "payload": {}, "evidence_ids": []})
+                self._emit(run_id, "tool", observation)
                 await asyncio.sleep(0.05)
             self._emit(run_id, "stage", {"stage": "原因分析", "status": "completed"})
+            if context.get("decision_brief", {}).get("status") != "SUCCESS":
+                run_status = "SKIPPED"
             answer = self._deterministic_answer(context)
-            if self.provider.config and self.runtime.app_mode == "private":
+            if self.provider.config:
                 model_context = {
                     "question": context.get("question"),
+                    "conversation": context.get("conversation"),
                     "dataset": context.get("dataset"),
                     "period": context.get("period"),
                     "scope_id": context.get("scope_id"),
                     "quality": context.get("quality"),
+                    "agent_plan": context.get("agent_plan"),
+                    "tool_observations": context.get("tool_observations"),
                     "decision_brief": context.get("decision_brief"),
+                    "trace": context.get("trace"),
                 }
                 prompt = (
                     "你是跨境电商经营分析师。只能根据以下受控工具结果回答，不得补充未经证据支持的因果。"
@@ -228,10 +248,17 @@ class AgentManager:
                     if generated:
                         answer = generated
                 except Exception as exc:
+                    run_status = "PARTIAL"
                     self._emit(run_id, "warning", {"message": f"模型调用失败，已返回确定性分析：{type(exc).__name__}"})
             answer = self._apply_answer_contract(answer, context)
             self._emit(run_id, "stage", {"stage": "生成建议", "status": "completed"})
-            self._emit(run_id, "result", {"answer": answer, "analysis": context, "scope_id": bundle.metadata.get("scope_id")})
+            self._emit(run_id, "result", {
+                "status": run_status,
+                "answer": answer,
+                "analysis": context,
+                "scope_id": bundle.metadata.get("scope_id"),
+                "trace": context.get("trace"),
+            })
             new_messages = [
                 {"role": "user", "content": question},
                 {"role": "assistant", "content": answer},
@@ -240,7 +267,7 @@ class AgentManager:
             if self.state:
                 self.state.save_messages(session_id, new_messages)
         except Exception as exc:
-            run_status = "FAILED"
+            run_status = "FATAL" if isinstance(exc, RuntimeError) else "FAILED"
             self._emit(run_id, "error", {"message": f"分析执行失败：{exc}"})
         finally:
             self.done.add(run_id)
