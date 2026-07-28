@@ -12,6 +12,7 @@ from crossborder_analytics.phase2_storage import ArtifactStore
 from crossborder_analytics.service import AnalysisService
 
 from .dataset_import_runtime import import_datasets as import_uploaded_datasets
+from .task_lifecycle import normalize_work_item_patch
 
 
 @dataclass(frozen=True)
@@ -197,3 +198,23 @@ class AnalysisQueryService:
                 filters=filters, period_type=period_type, analysis_mode=analysis_mode, topic=topic,
             ),
         )
+
+
+class WorkItemService:
+    def __init__(self, app_mode: str, state_store) -> None:
+        self.app_mode = app_mode
+        self.state_store = state_store
+        self._work_items = self.state_store.load_work_items() if self.state_store else {}
+
+    @property
+    def work_items(self) -> dict[str, Any]:
+        return self._work_items
+
+    def update(self, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.app_mode != "private":
+            raise PermissionError("演示模式不允许永久修改任务")
+        normalized = normalize_work_item_patch(payload)
+        self._work_items[item_id] = {"id": item_id, **normalized}
+        if self.state_store:
+            self.state_store.save_work_item(item_id, self._work_items[item_id])
+        return self._work_items[item_id]

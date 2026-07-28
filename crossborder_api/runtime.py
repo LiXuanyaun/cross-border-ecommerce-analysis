@@ -10,16 +10,14 @@ import os
 import pandas as pd
 
 from crossborder_analytics.localization import value_for
-from crossborder_analytics.decision_brief import build_decision_brief
 from crossborder_analytics.phase2_catalogs import ANOMALY_RULES, METRICS_CATALOG
 from crossborder_analytics.service import AnalysisService
 from crossborder_analytics.data_quality import assess_business_quality
 from crossborder_analytics.modules import amount_column
 from .report_runtime import export_scoped_bundle
 from .agent_tools import build_agent_tool_registry
-from .services import AnalysisQueryService, DatasetService, DemoScenario, SCENARIOS
+from .services import AnalysisQueryService, DatasetService, DemoScenario, SCENARIOS, WorkItemService
 from .state import StateStore
-from .task_lifecycle import normalize_work_item_patch
 from .topic_decisions import formal_topic_decisions
 
 
@@ -130,7 +128,10 @@ class AnalyticsRuntime:
         if self.app_mode == "private":
             state_path = Path(os.getenv("CROSSBORDER_STATE_DB", ROOT / "database" / "crossborder_state.db"))
             self.state_store = StateStore(state_path)
-        self._work_items = self.state_store.load_work_items() if self.state_store else {}
+        self.work_item_service = WorkItemService(self.app_mode, self.state_store)
+        self._work_items = self.work_item_service.work_items
+        from .agent_context_builder import AgentContextBuilder
+        self.agent_context_builder = AgentContextBuilder(self)
 
     def _ensure_context(self):
         return self.dataset_service.ensure_demo_context()
@@ -407,94 +408,13 @@ class AnalyticsRuntime:
         )
 
     def update_work_item(self, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if self.app_mode != "private":
-            raise PermissionError("演示模式不允许永久修改任务")
-        normalized = normalize_work_item_patch(payload)
-        self._work_items[item_id] = {"id": item_id, **normalized}
-        if self.state_store:
-            self.state_store.save_work_item(item_id, self._work_items[item_id])
-        return self._work_items[item_id]
+        return self.work_item_service.update(item_id, payload)
 
     def agent_context(
         self, dataset_id: str, question: str, start: str | None = None,
         end: str | None = None, market: str | None = None, category: str | None = None,
     ) -> tuple[dict[str, Any], Any]:
-        overview, bundle = self.overview(dataset_id, start, end)
-        if market or category:
-            bundle = self.bundle(dataset_id, start, end, market, category)
-        lowered = question.lower()
-        tool_names = ["get_dataset_profile", "get_data_quality", "query_metrics"]
-        tool_names.extend(["get_metric", "compare_periods"])
-        decision_requested = any(token in lowered for token in ("建议", "行动", "怎么办", "报告"))
-        diagnosis_requested = decision_requested or any(
-            token in lowered for token in ("异常", "下降", "风险", "为什么", "原因", "问题")
-        )
-        if diagnosis_requested:
-            tool_names.extend(["list_anomalies", "get_diagnosis", "get_evidence"])
-        if decision_requested:
-            tool_names.extend(["create_task", "get_recommendations", "generate_report", "generate_review_report", "explain_limitation"])
-        quality = bundle.artifacts.data_quality.to_dict() if bundle.artifacts.data_quality else None
-        insights = [item.to_dict() for item in bundle.artifacts.insights[:5]]
-        evidence = [item.to_dict() for item in bundle.artifacts.evidence[:3]]
-        recommendations = [item.to_dict() for item in bundle.artifacts.recommendations[:5]]
-        decision_brief = build_decision_brief(bundle.artifacts, bundle.metadata)
-        anomaly_by_id = {item.anomaly_id: item for item in bundle.artifacts.anomalies}
-        trace = []
-        for insight in bundle.artifacts.insights[:5]:
-            anomaly = anomaly_by_id.get(insight.anomaly_id or "")
-            trace.append({
-                "insight_id": insight.insight_id,
-                "anomaly_id": insight.anomaly_id,
-                "rule_id": anomaly.rule_id if anomaly else None,
-                "rule_version": anomaly.rule_version if anomaly else None,
-                "metric_id": insight.metric_id,
-                "evidence_ids": list(insight.evidence_ids),
-            })
-        execution_context = {
-            "question": question,
-            "dataset": {
-                "dataset_id": dataset_id,
-                "name": self.scenario(dataset_id).name,
-            },
-            "period": overview["period"],
-            "filters": {"start": start, "end": end, "market": market, "category": category},
-            "scope_id": bundle.metadata.get("scope_id"),
-            "overview": overview,
-            "quality": quality,
-            "insights": insights,
-            "evidence": evidence,
-            "recommendations": recommendations,
-            "decision_brief": decision_brief,
-            "trace": trace,
-        }
-        agent_plan = self.agent_tools.plan(question, execution_context)
-        planned_tools = [
-            tool
-            for step in agent_plan
-            for tool in step.get("tools", [])
-        ]
-        tool_names = list(dict.fromkeys(planned_tools or tool_names))
-        tool_observations = self.agent_tools.execute_plan(agent_plan, execution_context)
-        return _clean({
-            "question": question,
-            "dataset": {
-                "dataset_id": dataset_id,
-                "name": self.scenario(dataset_id).name,
-            },
-            "period": overview["period"],
-            "filters": {"start": start, "end": end, "market": market, "category": category},
-            "scope_id": bundle.metadata.get("scope_id"),
-            "tools": list(dict.fromkeys(tool_names)),
-            "agent_plan": agent_plan,
-            "overview": overview,
-            "quality": quality,
-            "insights": insights,
-            "evidence": evidence,
-            "recommendations": recommendations,
-            "decision_brief": decision_brief,
-            "trace": trace,
-            "tool_observations": tool_observations,
-        }), bundle
+        return self.agent_context_builder.build(dataset_id, question, start, end, market, category)
 
     def export(
         self, dataset_id: str, report_format: str, start: str | None = None,
