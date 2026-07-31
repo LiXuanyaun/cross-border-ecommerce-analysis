@@ -48,6 +48,11 @@ RULE_CATALOG: dict[str, dict[str, Any]] = {
 
 TOPICS = {"advertising", "returns", "logistics"}
 SIMULATION_LIMITATION = "广告、退款和物流来自 synthetic_extension 模拟数据，仅用于功能验证，不能视为真实经营表现。"
+TOPIC_METRICS = {
+    "advertising": tuple(key for key in METRIC_CATALOG if key.startswith("ad.")),
+    "returns": tuple(key for key in METRIC_CATALOG if key.startswith("returns.")),
+    "logistics": tuple(key for key in METRIC_CATALOG if key.startswith("logistics.")),
+}
 
 
 def _ratio(numerator: float, denominator: float) -> float | None:
@@ -88,23 +93,30 @@ class MultiBusinessAnalysisService:
                 connection.row_factory = sqlite3.Row
                 rows = connection.execute(
                     "SELECT b.dataset_id, MIN(b.started_at) imported_at, "
-                    "SUM(CASE WHEN b.data_origin='synthetic_extension' THEN 1 ELSE 0 END) extension_batches "
+                    "SUM(CASE WHEN b.data_origin='synthetic_extension' THEN 1 ELSE 0 END) extension_batches, "
+                    "(SELECT d.metadata_json FROM autoclean_datasets d "
+                    " WHERE d.dataset_id=b.dataset_id AND d.table_name='orders' LIMIT 1) metadata_json "
                     "FROM import_batches b GROUP BY b.dataset_id HAVING extension_batches > 0 ORDER BY imported_at DESC"
                 ).fetchall()
         except sqlite3.OperationalError as exc:
             if "no such table" in str(exc):
                 return []
             raise
-        return [
-            {
+        output = []
+        for row in rows:
+            metadata = json.loads(row["metadata_json"] or "{}")
+            unified = metadata.get("import_origin") == "unified"
+            output.append({
                 "dataset_id": row["dataset_id"],
-                "name": "AdventureWorks 多业务分析",
+                "name": metadata.get("dataset_name") or "AdventureWorks 多业务分析",
                 "imported_at": row["imported_at"],
                 "is_simulated": True,
-                "source_label": "AdventureWorks 原始订单 + 模拟广告/退款/物流数据",
-            }
-            for row in rows
-        ]
+                "source_label": (
+                    "统一经营演示数据中的 AdventureWorks 多业务推算事实"
+                    if unified else "AdventureWorks 原始订单 + 模拟广告/退款/物流数据"
+                ),
+            })
+        return output
 
     def analyze(
         self,
@@ -123,6 +135,9 @@ class MultiBusinessAnalysisService:
     ) -> dict[str, Any]:
         if topic not in TOPICS:
             raise ValueError("topic must be advertising, returns or logistics")
+        if bool(start) != bool(end):
+            raise ValueError("start and end must be provided together")
+        explicit_period = bool(start and end)
         bounds = self._date_bounds(topic, dataset_id)
         if not bounds:
             raise KeyError(dataset_id)
@@ -140,17 +155,38 @@ class MultiBusinessAnalysisService:
             "end": selected_end.date().isoformat(), **filters,
         }
         scope_id = "scope_{}".format(hashlib.sha256(json.dumps(scope_payload, sort_keys=True).encode()).hexdigest()[:16])
-        if topic == "advertising":
-            payload = self._advertising(dataset_id, selected_start, selected_end, filters, scope_id)
-        elif topic == "returns":
-            payload = self._returns(dataset_id, selected_start, selected_end, filters, scope_id)
+        available_start, available_end = (pd.Timestamp(value).normalize() for value in bounds)
+        outside_available = selected_end < available_start or selected_start > available_end
+        if outside_available:
+            payload = self._empty_payload(topic, selected_start, selected_end, scope_id)
+            data_state = "OUT_OF_RANGE"
         else:
-            payload = self._logistics(dataset_id, selected_start, selected_end, filters, scope_id)
+            if topic == "advertising":
+                payload = self._advertising(dataset_id, selected_start, selected_end, filters, scope_id)
+            elif topic == "returns":
+                payload = self._returns(dataset_id, selected_start, selected_end, filters, scope_id)
+            else:
+                payload = self._logistics(dataset_id, selected_start, selected_end, filters, scope_id)
+            fact_row_count = int(payload.pop("_fact_row_count", 0))
+            if not fact_row_count:
+                payload = self._empty_payload(topic, selected_start, selected_end, scope_id)
+                data_state = "EMPTY"
+            elif explicit_period and selected_end >= available_end and available_end.day != available_end.days_in_month:
+                data_state = "INCOMPLETE_PERIOD"
+                payload.setdefault("limitations", []).append("当前范围包含不完整月份，不生成正式环比结论。")
+            else:
+                data_state = "READY"
+        recommended_start = max(available_start, available_end.to_period("M").start_time - pd.DateOffset(months=11))
         return _json_value({
             "topic": topic,
             "dataset_id": dataset_id,
             "scope_id": scope_id,
             "period": {"start": selected_start.date().isoformat(), "end": selected_end.date().isoformat()},
+            "data_state": data_state,
+            "available_periods": [{"start": bounds[0], "end": bounds[1]}],
+            "recommended_period": {
+                "start": recommended_start.date().isoformat(), "end": available_end.date().isoformat(),
+            },
             "filters": {key: value for key, value in filters.items() if value},
             "filter_options": self._filter_options(topic, dataset_id),
             "data_source": {
@@ -167,6 +203,31 @@ class MultiBusinessAnalysisService:
             **payload,
         })
 
+    def _empty_payload(self, topic, start, end, scope_id):
+        evidence: list[dict[str, Any]] = []
+        metrics = [
+            self._metric(scope_id, metric_id, None, (start, end), self._date_bounds_mapping()[topic][0], 0, [], evidence)
+            for metric_id in TOPIC_METRICS[topic]
+        ]
+        titles = {
+            "advertising": ("广告花费与转化效率趋势", "活动投入与效率排名", "campaign_id", ["spend_usd", "conversions", "cvr", "roas"]),
+            "returns": ("退货与退款趋势", "高退款商品排名", "product", ["return_rate", "refund_amount_usd"]),
+            "logistics": ("运输时效与延误趋势", "承运商时效排名", "carrier_name", ["transit_days", "on_time_rate", "delay_rate", "delay_days"]),
+        }
+        trend_title, ranking_title, dimension, series = titles[topic]
+        payload = {
+            "metrics": metrics,
+            "trend": {"title": trend_title, "grain": "month", "rows": [], "series": series},
+            "ranking": {"title": ranking_title, "dimension": dimension, "rows": []},
+            "anomalies": [], "causes": [], "actions": [], "evidence": evidence, "details": [],
+            "limitations": ["当前范围没有该专题事实，指标、趋势、排名和明细均不生成。"],
+        }
+        if topic == "returns":
+            payload["distribution"] = {"title": "退货原因分布", "rows": []}
+        if topic == "logistics":
+            payload["tracking_exceptions"] = []
+        return payload
+
     def report_payload(self, dataset_id: str, start: str | None = None, end: str | None = None) -> dict[str, Any]:
         return {topic: self.analyze(topic, dataset_id, start, end) for topic in sorted(TOPICS)}
 
@@ -176,11 +237,7 @@ class MultiBusinessAnalysisService:
         return connection
 
     def _date_bounds(self, topic: str, dataset_id: str) -> tuple[str, str] | None:
-        mapping = {
-            "advertising": ("fact_ad_performance_daily", "ad_date"),
-            "returns": ("fact_returns", "return_request_date"),
-            "logistics": ("fact_shipments", "ship_date"),
-        }
+        mapping = self._date_bounds_mapping()
         table, field = mapping[topic]
         if not self.database_path.exists():
             return None
@@ -193,6 +250,14 @@ class MultiBusinessAnalysisService:
         except sqlite3.OperationalError:
             return None
         return (str(row[0])[:10], str(row[1])[:10]) if row and row[0] and row[1] else None
+
+    @staticmethod
+    def _date_bounds_mapping():
+        return {
+            "advertising": ("fact_ad_performance_daily", "ad_date"),
+            "returns": ("fact_returns", "return_request_date"),
+            "logistics": ("fact_shipments", "ship_date"),
+        }
 
     @staticmethod
     def _where(base_field: str, dataset_id: str, start: pd.Timestamp, end: pd.Timestamp, filters: list[tuple[str, Any]]):
@@ -257,6 +322,7 @@ class MultiBusinessAnalysisService:
         ranking = self._ad_group(frame, "campaign_id").sort_values("spend_usd", ascending=False)
         anomalies = self._ad_anomalies(dataset_id, end, filters, scope_id, evidence)
         return {
+            "_fact_row_count": len(frame),
             "metrics": metrics,
             "trend": {"title": "广告花费与转化效率趋势", "grain": "month", "rows": monthly.to_dict("records"), "series": ["spend_usd", "conversions", "cvr", "roas"]},
             "ranking": {"title": "活动投入与效率排名", "dimension": "campaign_id", "rows": ranking.head(20).to_dict("records")},
@@ -349,6 +415,7 @@ class MultiBusinessAnalysisService:
         anomalies = self._return_anomalies(dataset_id, end, filters, scope_id, evidence)
         reason_rows = returns.groupby("reason_category", dropna=False).agg(return_lines=("return_id", "nunique"), refund_amount_usd=("refund_amount_usd", "sum")).reset_index().sort_values("return_lines", ascending=False) if not returns.empty else pd.DataFrame(columns=["reason_category", "return_lines", "refund_amount_usd"])
         return {
+            "_fact_row_count": len(returns),
             "metrics": metrics,
             "trend": {"title": "退货与退款趋势", "grain": "month", "rows": monthly.to_dict("records"), "series": ["return_rate", "refund_amount_usd"]},
             "ranking": {"title": "高退款商品排名", "dimension": "product", "rows": ranking.head(20).to_dict("records")},
@@ -447,6 +514,7 @@ class MultiBusinessAnalysisService:
         anomalies = self._logistics_anomalies(dataset_id, end, filters, scope_id, evidence)
         exception_details = self._tracking_exceptions(dataset_id, keys)
         return {
+            "_fact_row_count": count,
             "metrics": metrics,
             "trend": {"title": "运输时效与延误趋势", "grain": "month", "rows": monthly.to_dict("records"), "series": ["transit_days", "on_time_rate", "delay_rate", "delay_days"]},
             "ranking": {"title": "承运商时效排名", "dimension": "carrier_name", "rows": ranking.head(20).to_dict("records")},

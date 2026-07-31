@@ -29,6 +29,7 @@ def test_overview_response_contract_locks_metrics_scope_and_evidence():
         "period", "selection_period", "current_period", "comparison_period",
         "market_comparison_period", "currency", "kpis", "trend", "trends",
         "tasks", "markets", "categories", "opportunities", "insights", "methodology",
+        "data_state", "available_periods", "recommended_period", "requested_period",
     }
     assert data["current_period"] == {"start": "2025-08-01", "end": "2025-08-31", "type": "month"}
     assert data["comparison_period"] == {"start": "2025-07-01", "end": "2025-07-31", "type": "month"}
@@ -79,6 +80,8 @@ def test_topic_response_contract_locks_market_payload_and_pagination():
     assert set(data) == {
         "topic", "summary", "metrics", "trend", "composition", "ranking", "columns",
         "details", "pagination", "filters", "decision_board", "ai", "report",
+        "data_state", "available_periods", "recommended_period", "requested_period",
+        "visualizations", "table",
     }
     assert data["topic"] == "market"
     assert data["pagination"] == {"page": 1, "page_size": 5, "total": 5, "pages": 1}
@@ -103,7 +106,22 @@ def test_topic_response_contract_locks_market_payload_and_pagination():
     assert anomaly["evidence_ids"] == ["ev_2d6fc924f071b5530b099b22"]
     assert set(data["ai"]) == {"findings", "evidence", "actions"}
     assert data["ai"]["actions"][0]["evidence_ids"] == ["ev_2d6fc924f071b5530b099b22"]
+    topic_evidence = data["ai"]["evidence"][0]
+    assert set(topic_evidence) == {
+        "contract_version", "id", "metric", "value", "unit", "claim", "formula",
+        "sample_size", "confidence", "source_fields", "period", "filters",
+        "quality_state", "limitations",
+    }
+    assert topic_evidence["contract_version"] == "topic-evidence.v1"
+    assert not {"query_name", "database_schema_version", "result_digest"} & set(topic_evidence)
     assert data["report"]["summary"] == data["summary"]
+
+
+def test_analysis_routes_require_explicit_dataset_identity():
+    with TestClient(app) as client:
+        assert client.get("/api/v1/overview").status_code == 422
+        assert client.get("/api/v1/topics/market").status_code == 422
+        assert client.get("/api/v1/topics/market/export").status_code == 422
 
 
 def test_agent_context_contract_uses_same_scope_and_registered_tools():
@@ -158,11 +176,15 @@ def test_import_preview_response_contract_preserves_mapping_and_capability_field
         ))
 
     assert meta["app_mode"] == "demo"
-    assert set(data) == {"status", "file_count", "total_rows", "files", "batch_issues", "next_step"}
+    assert set(data) == {
+        "status", "file_count", "total_rows", "files", "batch_issues", "next_step",
+        "preview_id", "expires_at",
+    }
     assert data["status"] == "READY_FOR_MAPPING_CONFIRMATION"
     assert data["file_count"] == 1
     assert data["total_rows"] == 2
     assert data["batch_issues"] == []
+    assert data["preview_id"].startswith("preview_")
     preview = data["files"][0]
     assert set(preview) == {
         "filename", "source_file_id", "status", "metadata", "sheets", "selected_sheet",
@@ -185,6 +207,33 @@ def test_import_preview_response_contract_preserves_mapping_and_capability_field
         "overview": "FULL", "market": "FULL", "product": "FULL",
         "customer": "DISABLED", "profit": "DISABLED", "returns": "DISABLED",
     }
+
+
+def test_import_preview_accepts_more_than_twenty_valid_files():
+    files = [
+        (
+            "files",
+            (
+                f"orders-{index}.csv",
+                f"order_id,order_date,total_amount\nA{index},2025-01-01,{index + 1}\n".encode(),
+                "text/csv",
+            ),
+        )
+        for index in range(21)
+    ]
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/imports/preview", files=files)
+
+    assert response.status_code == 200
+    assert response.json()["data"]["file_count"] == 21
+
+
+def test_agent_session_requires_explicit_dataset_identity():
+    with TestClient(app) as client:
+        response = client.post("/api/v1/agent/sessions", json={})
+
+    assert response.status_code == 422
 
 
 def test_committed_import_response_contract_uses_dataset_scope_and_lineage(tmp_path, monkeypatch):
@@ -228,3 +277,35 @@ def test_committed_import_response_contract_uses_dataset_scope_and_lineage(tmp_p
     assert overview_meta["scope_id"].startswith("scope_")
     assert overview_meta["quality_rating"] in {"A", "B", "C", "D"}
     assert overview["kpis"][0]["metric_id"] == "gmv"
+
+
+def test_commit_reuses_staged_preview_without_reupload(tmp_path, monkeypatch):
+    database_path = tmp_path / "staged-import.db"
+    monkeypatch.setattr(runtime._service, "database_path", database_path)
+    runtime.clear_analysis_cache()
+    content = (
+        "order_id,order_date,total_amount,country\n"
+        "A1,2025-01-01,10,US\n"
+        "A2,2025-01-02,20,US\n"
+    ).encode()
+
+    with TestClient(app) as client:
+        preview = _data(client.post(
+            "/api/v1/imports/preview",
+            files={"files": ("orders.csv", content, "text/csv")},
+        ))[0]
+        response = client.post("/api/v1/imports", data={
+            "preview_id": preview["preview_id"],
+            "mapping_json": json.dumps({
+                "order_id": "order_id", "order_date": "order_date",
+                "total_amount": "total_amount", "country": "country",
+            }),
+            "dataset_name": "暂存引用导入",
+            "data_grain": "order",
+            "amount_semantic": "order_total",
+            "source_currency": "CNY",
+            "target_currency": "CNY",
+        })
+
+    assert response.status_code == 200
+    assert response.json()["data"]["status"] == "READY"

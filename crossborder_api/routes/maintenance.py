@@ -15,6 +15,40 @@ from ..schemas import ApiEnvelope, WorkItemPatch
 router = APIRouter(prefix="/api/v1")
 
 
+@router.get("/maintenance/unified-dataset/preview")
+def unified_dataset_preview():
+    try:
+        return envelope(runtime.unified_dataset_preview())
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.get("/maintenance/unified-dataset/lifecycle")
+def unified_dataset_lifecycle():
+    try:
+        return envelope(runtime.unified_lifecycle_status())
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@router.post("/maintenance/unified-dataset/deactivate-sources")
+def deactivate_unified_sources():
+    try:
+        return envelope(runtime.deactivate_unified_sources())
+    except (KeyError, RuntimeError) as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.post("/maintenance/unified-dataset/restore-sources")
+def restore_unified_sources(dataset_id: list[str] = Query(...)):
+    return envelope(runtime.restore_unified_sources(dataset_id))
+
+
+@router.post("/maintenance/unified-dataset/purge-eligible")
+def purge_eligible_unified_sources():
+    return envelope(runtime.purge_eligible_unified_sources())
+
+
 @router.patch("/work-items/{item_id}", response_model=ApiEnvelope[dict[str, Any]])
 def update_work_item(item_id: str, payload: WorkItemPatch):
     try:

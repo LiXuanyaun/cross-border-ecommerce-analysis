@@ -1,28 +1,22 @@
-import ReactEChartsCore from "echarts-for-react/lib/core";
+import { lazy, Suspense, useEffect, useState, type CSSProperties } from "react";
 import type { EChartsOption } from "echarts";
-import type { ComponentProps } from "react";
-import { BarChart, LineChart, PieChart, TreemapChart } from "echarts/charts";
-import {
-  GridComponent,
-  LegendComponent,
-  TooltipComponent,
-} from "echarts/components";
-import * as echarts from "echarts/core";
-import { CanvasRenderer } from "echarts/renderers";
+import type { EChartProps } from "./EChartImpl";
 
-echarts.use([
-  BarChart,
-  LineChart,
-  PieChart,
-  TreemapChart,
-  GridComponent,
-  LegendComponent,
-  TooltipComponent,
-  CanvasRenderer,
-]);
+const LazyEChart = lazy(() => import("./EChartImpl").then((module) => ({ default: module.EChart })));
 
-export type { EChartsOption };
+export type { EChartProps, EChartsOption };
 
-export function EChart(props: ComponentProps<typeof ReactEChartsCore>) {
-  return <ReactEChartsCore echarts={echarts} {...props} />;
+export function EChart(props: EChartProps) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setReady(true), 1_500);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const placeholder = <div aria-label="图表加载中" className="animate-pulse rounded-md bg-[#f2f4f7]" style={props.style as CSSProperties} />;
+  if (!ready) return placeholder;
+  return (
+    <Suspense fallback={placeholder}>
+      <LazyEChart {...props} />
+    </Suspense>
+  );
 }

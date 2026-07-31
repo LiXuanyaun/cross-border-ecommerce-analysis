@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Any
+from types import SimpleNamespace
+from datetime import datetime, timezone
 import math
 
 import pandas as pd
@@ -9,8 +11,12 @@ import pandas as pd
 from .runtime import (
     SAMPLE, METRIC_LABELS, _clean, _entity_label, _localize, _rate, _records, _threshold_text,
 )
-from .topic_decisions import formal_topic_decisions
+from .topic_decisions import customer_normal_decisions, formal_topic_decisions
+from .presentation_contracts import build_topic_presentation_contract
+from crossborder_analytics.decision import market_series, resolve_market_field
 from crossborder_analytics.modules import amount_column
+from crossborder_analytics.metrics import build_scope_id
+from crossborder_analytics.phase2_models import AnalysisRequest
 
 
 class _RuntimeBackedPresenter:
@@ -23,6 +29,12 @@ class _RuntimeBackedPresenter:
 
 class OverviewPresenter(_RuntimeBackedPresenter):
     def present(self, dataset_id: str, start: str | None = None, end: str | None = None) -> tuple[dict, Any]:
+        capability_contract = self.runtime.dataset_capabilities(
+            dataset_id, fact="orders", start=start, end=end,
+        )
+        capability = capability_contract["facts"]["orders"]
+        if capability["state"] in {"EMPTY", "OUT_OF_RANGE", "INSUFFICIENT_DATA", "FAILED", "FATAL"}:
+            return self._empty_overview(dataset_id, start, end, capability)
         selection_start, selection_end = self.date_bounds(dataset_id)
         selection_start = start or selection_start
         selection_end = end or selection_end
@@ -99,13 +111,14 @@ class OverviewPresenter(_RuntimeBackedPresenter):
                 "evidence_id": current.evidence_id if current else None,
             })
 
+        source["_market"] = market_series(source)
         market_current = source.loc[source.order_date.between(current_period["start"], current_period["end"])]
         yoy_start = (pd.Timestamp(current_period["start"]) - pd.DateOffset(years=1)).date().isoformat()
         yoy_end = (pd.Timestamp(current_period["end"]) - pd.DateOffset(years=1)).date().isoformat()
         market_previous = source.loc[source.order_date.between(yoy_start, yoy_end)]
-        market_field = "country" if "country" in source and source["country"].notna().any() else "region"
-        current_market_gmv = market_current.groupby(market_field)[amount].sum()
-        previous_market_gmv = market_previous.groupby(market_field)[amount].sum()
+        market_field = resolve_market_field(market_current) or resolve_market_field(source)
+        current_market_gmv = market_current.groupby("_market")[amount].sum() if market_field else pd.Series(dtype=float)
+        previous_market_gmv = market_previous.groupby("_market")[amount].sum() if market_field else pd.Series(dtype=float)
         total_market_gmv = float(current_market_gmv.sum())
         markets = []
         for rank, (market, gmv) in enumerate(current_market_gmv.sort_values(ascending=False).head(5).items(), start=1):
@@ -438,6 +451,10 @@ class OverviewPresenter(_RuntimeBackedPresenter):
         }
 
         return _clean({
+            "data_state": capability["state"],
+            "available_periods": capability["available_periods"],
+            "recommended_period": capability["recommended_period"],
+            "requested_period": capability["requested_period"],
             "period": current_period,
             "current_period": current_period,
             "comparison_period": comparison_period,
@@ -457,6 +474,41 @@ class OverviewPresenter(_RuntimeBackedPresenter):
             "methodology": methodology,
             "currency": "CNY",
         }), bundle
+
+    def _empty_overview(self, dataset_id, start, end, capability):
+        selected = capability.get("requested_period") or capability.get("recommended_period")
+        if selected is None:
+            periods = capability.get("available_periods") or []
+            selected = {"start": periods[-1]["start"], "end": periods[-1]["end"]} if periods else {"start": start or "", "end": end or ""}
+        scenario = self.scenario(dataset_id)
+        filters: dict[str, Any] = {key: list(values) for key, values in scenario.filters.items()}
+        if selected["start"] and selected["end"]:
+            filters["order_date"] = (selected["start"], selected["end"])
+        request = AnalysisRequest(filters=filters)
+        metadata = scenario.metadata or {}
+        currency = str(metadata.get("target_currency") or metadata.get("source_currency") or "CNY")
+        scope_id = build_scope_id(dataset_id, request, currency)
+        bundle = SimpleNamespace(
+            metadata={"scope_id": scope_id, "dataset_id": dataset_id},
+            artifacts=SimpleNamespace(data_quality=None),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        period = {"start": selected["start"], "end": selected["end"], "type": "selection"}
+        trend = {"grain": "day", "current_period": period, "comparison_period": period, "rows": []}
+        methodology_item = {"basis": "当前范围没有订单事实", "comparison": "不可比较", "threshold": "事实记录数必须大于 0"}
+        return {
+            "scope_id": scope_id,
+            "data_state": capability["state"],
+            "available_periods": capability.get("available_periods", []),
+            "recommended_period": capability.get("recommended_period"),
+            "requested_period": capability.get("requested_period"),
+            "period": period, "current_period": period, "comparison_period": period,
+            "selection_period": period, "market_comparison_period": period,
+            "kpis": [], "trends": {"day": trend, "week": {**trend, "grain": "week"}}, "trend": [],
+            "markets": [], "categories": [], "tasks": [], "opportunities": [], "insights": [],
+            "methodology": {key: methodology_item for key in ("kpis", "trend", "tasks", "markets", "products", "opportunities", "insights")},
+            "currency": currency,
+        }, bundle
 
 
 
@@ -489,6 +541,17 @@ class TopicPresenter(_RuntimeBackedPresenter):
         page: int,
         page_size: int,
     ) -> tuple[dict, Any]:
+        capability_contract = self.runtime.dataset_capabilities(
+            dataset_id, fact="orders", start=start, end=end,
+        )
+        capability = capability_contract["facts"]["orders"]
+        if capability["state"] in {"EMPTY", "OUT_OF_RANGE", "INSUFFICIENT_DATA", "FAILED", "FATAL"}:
+            data, bundle = self._empty_topic(
+                dataset_id, topic, start, end, market, category, capability,
+            )
+            data["pagination"] = {"page": page, "page_size": page_size, "total": 0, "pages": 1}
+            data.update(build_topic_presentation_contract(data))
+            return data, bundle
         base, bundle = self._topic_base(dataset_id, topic, start, end, market, category)
         scope_id = bundle.metadata.get("scope_id")
         if not scope_id:
@@ -509,6 +572,10 @@ class TopicPresenter(_RuntimeBackedPresenter):
         }
         data = {
             **public_base,
+            "data_state": capability["state"],
+            "available_periods": capability["available_periods"],
+            "recommended_period": capability["recommended_period"],
+            "requested_period": capability["requested_period"],
             "details": rows,
             "pagination": {
                 "page": page,
@@ -517,6 +584,66 @@ class TopicPresenter(_RuntimeBackedPresenter):
                 "pages": max(1, math.ceil(total / page_size)),
             },
         }
+        data.update(build_topic_presentation_contract(data))
+        return data, bundle
+
+    def _empty_topic(self, dataset_id, topic, start, end, market, category, capability):
+        selected = capability.get("requested_period") or capability.get("recommended_period")
+        if selected is None:
+            periods = capability.get("available_periods") or []
+            selected = {"start": periods[-1]["start"], "end": periods[-1]["end"]} if periods else {"start": start or "", "end": end or ""}
+        scenario = self.scenario(dataset_id)
+        filters: dict[str, Any] = {key: list(values) for key, values in scenario.filters.items()}
+        if selected["start"] and selected["end"]:
+            filters["order_date"] = (selected["start"], selected["end"])
+        if market:
+            filters["region"] = [market]
+        if category:
+            filters["category"] = [category]
+        request = AnalysisRequest(filters=filters, analysis_mode="topic", topic=topic)
+        metadata = scenario.metadata or {}
+        currency = str(metadata.get("target_currency") or metadata.get("source_currency") or "CNY")
+        scope_id = build_scope_id(dataset_id, request, currency)
+        bundle = SimpleNamespace(
+            metadata={"scope_id": scope_id, "dataset_id": dataset_id},
+            artifacts=SimpleNamespace(data_quality=None),
+            generated_at=datetime.now(timezone.utc).isoformat(),
+        )
+        empty_period = {"start": selected["start"], "end": selected["end"], "type": "month"}
+        state_label = "当前选择时期与订单事实不相交" if capability["state"] == "OUT_OF_RANGE" else "当前范围没有可分析的订单事实"
+        trend = {
+            "title": "当前范围趋势", "format": "currency", "secondary_label": None,
+            "secondary_format": None, "rows": [],
+        }
+        data = {
+            "topic": topic,
+            "scope_id": scope_id,
+            "summary": state_label,
+            "data_state": capability["state"],
+            "available_periods": capability.get("available_periods", []),
+            "recommended_period": capability.get("recommended_period"),
+            "requested_period": capability.get("requested_period"),
+            "metrics": [],
+            "trend": trend,
+            "composition": {"title": "当前范围构成", "format": "currency", "rows": []},
+            "ranking": {"title": "当前范围排名", "format": "currency", "secondary_format": None, "rows": []},
+            "columns": [],
+            "details": [],
+            "filters": {"start": selected["start"], "end": selected["end"], "markets": [], "categories": []},
+            "decision_board": {
+                "basis": state_label,
+                "trend": {**trend, "current_period": empty_period, "comparison_period": empty_period},
+                "anomalies": [], "drivers": [],
+                "state": {"status": "INSUFFICIENT", "title": state_label, "description": "请使用可用时期后重新分析。", "missing_fields": capability.get("missing_fields", [])},
+            },
+            "ai": {"findings": [], "evidence": [], "actions": []},
+            "report": {
+                "title": "{}专题分析".format(topic), "generated_at": bundle.generated_at,
+                "period": empty_period, "filters": {"market": market or "全部", "category": category or "全部"},
+                "summary": state_label, "findings": [], "evidence": [], "actions": [],
+            },
+        }
+        data.update(build_topic_presentation_contract(data))
         return data, bundle
 
     def _topic_uncached(
@@ -528,8 +655,10 @@ class TopicPresenter(_RuntimeBackedPresenter):
         market: str | None,
         category: str | None,
     ) -> tuple[dict, Any]:
+        # Topic views share the full-scope artifacts with overview; their own
+        # filtering and presentation happen below and must not overwrite that scope.
         bundle = self.bundle(
-            dataset_id, start, end, market, category, analysis_mode="topic", topic=topic,
+            dataset_id, start, end, market, category, analysis_mode="full", topic=None,
         )
         sales = bundle.results["sales"].data
         overview = bundle.results["overview"].data
@@ -541,7 +670,7 @@ class TopicPresenter(_RuntimeBackedPresenter):
             (field for field in ("profit_amount_base", "profit_amount") if field in source),
             None,
         )
-        market_field = "country" if "country" in source and source.country.notna().any() else "region"
+        market_field = resolve_market_field(source) or "region"
         source["_gmv"] = pd.to_numeric(source[amount], errors="coerce").fillna(0.0)
         source["_profit"] = (
             pd.to_numeric(source[profit_field], errors="coerce").fillna(0.0)
@@ -883,19 +1012,80 @@ class TopicPresenter(_RuntimeBackedPresenter):
                 return float(rows._returned.sum() / period_orders) if period_orders else None
             return float(rows._gmv.sum())
 
+        # The overview already exposes daily and weekly buckets. Topic pages use
+        # the same rule so a one-month dataset does not collapse to one point.
+        current_start = pd.Timestamp(current_period["start"]) if current_period["start"] else None
+        current_end = pd.Timestamp(current_period["end"]) if current_period["end"] else None
+        span_days = (current_end - current_start).days + 1 if current_start is not None and current_end is not None else 0
+        trend_grain = "day" if span_days <= 45 else "week" if span_days <= 180 else "month"
+
+        def trend_bucket(value: pd.Series, grain: str) -> pd.Series:
+            dates = pd.to_datetime(value)
+            if grain == "day":
+                return dates.dt.normalize()
+            if grain == "week":
+                return dates.dt.to_period("W-SUN").dt.start_time
+            return dates.dt.to_period("M").dt.start_time
+
+        def bucket_keys(period: dict[str, str | None], grain: str) -> list[pd.Timestamp]:
+            if not period["start"] or not period["end"]:
+                return []
+            start_value = pd.Timestamp(period["start"])
+            end_value = pd.Timestamp(period["end"])
+            if grain == "day":
+                return list(pd.date_range(start_value, end_value, freq="D"))
+            if grain == "week":
+                start_value = start_value.to_period("W-SUN").start_time
+                end_value = end_value.to_period("W-SUN").start_time
+                return list(pd.date_range(start_value, end_value, freq="7D"))
+            start_value = start_value.to_period("M").start_time
+            end_value = end_value.to_period("M").start_time
+            return list(pd.date_range(start_value, end_value, freq="MS"))
+
+        current_trend_source = current_source.copy()
+        comparison_trend_source = comparison_source.copy()
+        current_trend_source["_trend_bucket"] = trend_bucket(current_trend_source.order_date, trend_grain)
+        comparison_trend_source["_trend_bucket"] = trend_bucket(comparison_trend_source.order_date, trend_grain)
+
+        def trend_value(frame: pd.DataFrame, bucket: pd.Timestamp, metric_id: str) -> float | None:
+            rows = frame.loc[frame["_trend_bucket"].eq(bucket)]
+            if rows.empty:
+                return None
+            if metric_id == "units":
+                return float(pd.to_numeric(rows.get("quantity"), errors="coerce").fillna(0).sum()) if "quantity" in rows else None
+            if metric_id == "customers":
+                return float(rows.customer_id.nunique()) if "customer_id" in rows else None
+            if metric_id == "profit":
+                return float(rows._profit.sum())
+            if metric_id == "return_rate":
+                period_orders = int(rows.order_id.nunique())
+                return float(rows._returned.sum() / period_orders) if period_orders else None
+            return float(rows._gmv.sum())
+
+        current_keys = bucket_keys(current_period, trend_grain)
+        comparison_keys = bucket_keys(comparison_period, trend_grain)
         comparison_trend_rows = []
-        for index, current_month in enumerate(current_months):
-            previous_month = comparison_months[index] if index < len(comparison_months) else None
+        for index, current_bucket in enumerate(current_keys):
+            comparison_bucket = comparison_keys[index] if index < len(comparison_keys) else None
+            if trend_grain == "day":
+                label = current_bucket.strftime("%m-%d")
+            elif trend_grain == "week":
+                label = "{}周".format(current_bucket.strftime("%m-%d"))
+            else:
+                label = current_bucket.strftime("%Y-%m")
             comparison_trend_rows.append({
-                "label": "{}月".format(str(current_month)[5:7]),
-                "current_period": current_month,
-                "comparison_period": previous_month,
-                "current": monthly_value(current_source, current_month, decision_config["trend_metric"]),
-                "comparison": monthly_value(comparison_source, previous_month, decision_config["trend_metric"]) if previous_month else None,
+                "label": label,
+                "current_period": current_bucket.date().isoformat(),
+                "comparison_period": comparison_bucket.date().isoformat() if comparison_bucket is not None else None,
+                "current": trend_value(current_trend_source, current_bucket, decision_config["trend_metric"]),
+                "comparison": trend_value(comparison_trend_source, comparison_bucket, decision_config["trend_metric"]) if comparison_bucket is not None else None,
             })
 
         current_label = "{} 至 {}".format(current_period["start"], current_period["end"])
-        comparison_label = "{} 至 {}".format(comparison_period["start"], comparison_period["end"])
+        comparison_label = (
+            "{} 至 {}".format(comparison_period["start"], comparison_period["end"])
+            if comparison_period["start"] and comparison_period["end"] else "暂无可比周期"
+        )
         formal = formal_topic_decisions(bundle, topic, current_period)
         decision_summary = formal["summary"]
         anomalies = formal["anomalies"]
@@ -903,16 +1093,48 @@ class TopicPresenter(_RuntimeBackedPresenter):
         findings = formal["findings"]
         evidence = formal["evidence"]
         actions = formal["actions"]
+        decision_state = {
+            "status": "ANOMALY" if anomalies else "HEALTHY",
+            "title": "发现需要关注的异常" if anomalies else "当前范围未发现符合规则的异常",
+            "description": "请按影响和证据优先级复核。" if anomalies else "继续按当前节奏监测正式指标。",
+            "missing_fields": [],
+        }
+        if topic == "customer" and not anomalies:
+            required_customer_fields = ("customer_id", "order_id", "order_date", "total_amount")
+            missing_customer_fields = [
+                field for field in required_customer_fields
+                if field not in source or not source[field].notna().any()
+            ]
+            normal = customer_normal_decisions(
+                customer_count=customer_count,
+                order_count=orders,
+                gmv=gmv,
+                segments=segments,
+                period=period_for(source),
+                filters={
+                    "market": market or "全部市场",
+                    "category": _localize(category, "category") if category else "全部品类",
+                },
+                missing_fields=missing_customer_fields,
+            )
+            decision_state = normal["state"]
+            decision_summary = normal["summary"]
+            drivers = normal["drivers"]
+            findings = normal["findings"]
+            evidence = normal["evidence"]
+            actions = normal["actions"]
 
         decision_board = {
             "basis": "本期 {}；上期 {}。异常、诊断和建议仅来自正式版本化分析链路。".format(current_label, comparison_label),
             "trend": {
                 "title": decision_config["trend_title"], "format": decision_config["trend_format"],
+                "grain": trend_grain,
                 "current_period": current_period, "comparison_period": comparison_period,
                 "rows": comparison_trend_rows,
             },
             "anomalies": anomalies,
             "drivers": drivers,
+            "state": decision_state,
         }
 
         detail_frame = analysis_frame.copy()

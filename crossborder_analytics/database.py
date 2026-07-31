@@ -48,6 +48,7 @@ class CrossBorderDatasetStore(SQLiteDatasetStore):
         context: DatasetContext,
         table_name: str,
         dataset_id: Optional[str] = None,
+        final_status: str = "READY",
     ) -> StoredDataset:
         """Persist the canonical order frame without per-cell compatibility dispatch."""
         table_sql = _quote_identifier(table_name)
@@ -59,6 +60,8 @@ class CrossBorderDatasetStore(SQLiteDatasetStore):
         for column in frame.columns:
             _quote_identifier(str(column))
 
+        if final_status not in {"READY", "BUILDING"}:
+            raise SQLiteStorageError("Unsupported dataset status: {}".format(final_status))
         resolved_id = dataset_id or self._dataset_id(context, table_name)
         existing = self.get_dataset(resolved_id)
         if existing is not None:
@@ -168,8 +171,8 @@ class CrossBorderDatasetStore(SQLiteDatasetStore):
                         ),
                     )
                 connection.execute(
-                    "UPDATE autoclean_datasets SET status = 'READY' WHERE dataset_id = ?",
-                    (resolved_id,),
+                    "UPDATE autoclean_datasets SET status = ? WHERE dataset_id = ?",
+                    (final_status, resolved_id),
                 )
                 connection.commit()
         except (sqlite3.Error, SQLiteStorageError) as exc:
@@ -238,14 +241,26 @@ class CrossBorderDatabase:
         self.path = Path(path)
         self.store = CrossBorderDatasetStore(self.path)
 
-    def persist(self, context, dataset_id: str | None = None) -> StoredDataset:
+    def persist(
+        self,
+        context,
+        dataset_id: str | None = None,
+        *,
+        final_status: str = "READY",
+    ) -> StoredDataset:
         self._migrate_orders_schema()
+        dataset_id = dataset_id or context.metadata.get("dataset_id")
         stored_context = replace(
             context,
             analysis_data=storage_frame(context),
             contract=ECOMMERCE_STORAGE_CONTRACT,
         )
-        stored = self.store.store_context(stored_context, "orders", dataset_id=dataset_id)
+        stored = self.store.store_context(
+            stored_context,
+            "orders",
+            dataset_id=dataset_id,
+            final_status=final_status,
+        )
         context.metadata.update({
             "database_path": str(self.path.resolve()),
             "database_schema_version": 4,
@@ -328,7 +343,7 @@ class CrossBorderDatabase:
         output = []
         for row in rows:
             metadata = _json_object(row["metadata_json"])
-            if metadata.get("import_origin") not in {"web", "adventureworks"}:
+            if metadata.get("import_origin") not in {"web", "adventureworks", "unified"}:
                 continue
             output.append({
                 "dataset_id": row["dataset_id"],

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..app_state import envelope, runtime
 from ..schemas import ApiEnvelope, BusinessDataset, BusinessTopicData
@@ -11,7 +11,7 @@ router = APIRouter(prefix="/api/v1/business", tags=["multi-business"])
 
 @router.get("/datasets", response_model=ApiEnvelope[list[BusinessDataset]])
 def business_datasets():
-    return envelope(runtime.multi_business_presenter.datasets())
+    return envelope(runtime.business_datasets())
 
 
 @router.get("/{topic}", response_model=ApiEnvelope[BusinessTopicData])
@@ -28,6 +28,8 @@ def business_topic(
     return_reason: str | None = None,
     carrier_id: str | None = None,
     region: str | None = None,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=5, le=100),
 ):
     try:
         data = runtime.multi_business_presenter.present(
@@ -43,6 +45,8 @@ def business_topic(
             return_reason=return_reason,
             carrier_id=carrier_id,
             region=region,
+            page=page,
+            page_size=page_size,
         )
     except KeyError:
         raise HTTPException(404, "数据集没有可用的多业务事实，请先导入 AdventureWorks 扩展数据")

@@ -15,7 +15,7 @@ ENDPOINTS = {
     "chrome": "http://127.0.0.1:9222",
     "edge": "http://127.0.0.1:9223",
 }
-DEFAULT_URL = "http://localhost:8501"
+DEFAULT_URL = "http://localhost:8000"
 SIDEBAR_SELECTORS = (
     '[data-testid="stSidebar"]',
     '[data-testid="stHeader"]',
@@ -58,7 +58,7 @@ def connected_page(browser_name: str, url: str | None = None) -> Iterator[object
             raise RuntimeError(f"{browser_name} has no browser context")
         context = browser.contexts[0]
         pages = context.pages
-        page = next((candidate for candidate in pages if candidate.url.startswith("http://localhost:8501")), None)
+        page = next((candidate for candidate in pages if candidate.url.startswith("http://localhost:8000")), None)
         page = page or (pages[0] if pages else context.new_page())
         if url:
             page.goto(url, wait_until="domcontentloaded")

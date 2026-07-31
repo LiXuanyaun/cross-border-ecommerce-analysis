@@ -261,15 +261,23 @@ class ArtifactStore:
             )
             connection.commit()
 
-    def load(self, scope_id: str) -> AnalysisArtifacts | None:
+    def load(
+        self,
+        scope_id: str,
+        expected_catalog_versions: Mapping[str, Any] | None = None,
+    ) -> AnalysisArtifacts | None:
         with self.connection() as connection:
             row = connection.execute(
-                "SELECT unsupported_conclusions_json FROM analysis_runs "
+                "SELECT unsupported_conclusions_json, catalog_versions_json FROM analysis_runs "
                 "WHERE scope_id=? AND status='READY'",
                 (scope_id,),
             ).fetchone()
         if row is None:
             return None
+        if expected_catalog_versions is not None:
+            stored_versions = json.loads(row["catalog_versions_json"] or "{}")
+            if stored_versions != dict(expected_catalog_versions):
+                return None
         try:
             payload: dict[str, Any] = {
                 "metric_definitions": self._payload_rows("metric_definitions"),

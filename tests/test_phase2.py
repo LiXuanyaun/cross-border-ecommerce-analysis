@@ -8,7 +8,7 @@ import pytest
 from crossborder_analytics.evidence import EvidenceService
 from crossborder_analytics.phase2_models import AnalysisRequest
 from crossborder_analytics.phase2_storage import ArtifactStore
-from crossborder_analytics.phase2_ui import build_risk_items, latest_priority_insights
+from crossborder_analytics.presentation_logic import build_risk_items, latest_priority_insights
 from crossborder_analytics.reporting import export_bundle
 from crossborder_analytics.service import AnalysisService
 

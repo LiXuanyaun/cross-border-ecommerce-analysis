@@ -1,7 +1,7 @@
 import pandas as pd
 from pandas.testing import assert_frame_equal
 
-from crossborder_analytics.ui import customer_detail_frame
+from crossborder_analytics.presentation_logic import customer_detail_frame
 
 
 def test_customer_detail_filter_orders_rows_and_keeps_source_immutable():

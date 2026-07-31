@@ -16,9 +16,13 @@ from crossborder_analytics.data_quality import assess_business_quality
 from crossborder_analytics.modules import amount_column
 from crossborder_analytics.multibusiness_import import MultiBusinessImportService
 from crossborder_analytics.multibusiness_analysis import MultiBusinessAnalysisService
+from crossborder_analytics.unified_dataset import UnifiedDatasetPreviewService
+from crossborder_analytics.unified_materialization import UnifiedDatasetMaterializationService
+from crossborder_analytics.unified_lifecycle import UnifiedDatasetLifecycleService
 from .report_runtime import export_scoped_bundle
 from .agent_tools import build_agent_tool_registry
 from .services import AnalysisQueryService, DatasetService, DemoScenario, SCENARIOS, WorkItemService
+from .dataset_capabilities import DatasetCapabilityService
 from .state import StateStore
 from .topic_decisions import formal_topic_decisions
 
@@ -112,16 +116,36 @@ class AnalyticsRuntime:
         self.app_mode = os.getenv("CROSSBORDER_APP_MODE", "demo").strip().lower()
         self._service = AnalysisService(cache_dir=ROOT / ".cache" / "fx")
         self.dataset_service = DatasetService(self._service, SAMPLE)
+        self.dataset_capability_service = DatasetCapabilityService(self.dataset_service)
         self.analysis_query_service = AnalysisQueryService(self.dataset_service)
         self.multi_business_import_service = MultiBusinessImportService(
             self._service.database_path, self._service,
         )
         self.multi_business_analysis_service = MultiBusinessAnalysisService(self._service.database_path)
+        state_path = Path(os.getenv("CROSSBORDER_STATE_DB", ROOT / "database" / "crossborder_state.db"))
+        self.unified_dataset_preview_service = UnifiedDatasetPreviewService(
+            SAMPLE,
+            ROOT / "data" / "AdventureWorksDW-data",
+            self._service.database_path,
+            state_path,
+        )
+        self.unified_dataset_materialization_service = UnifiedDatasetMaterializationService(
+            SAMPLE,
+            ROOT / "data" / "AdventureWorksDW-data",
+            self._service.database_path,
+            state_path,
+        )
+        self.unified_dataset_lifecycle_service = UnifiedDatasetLifecycleService(
+            self._service.database_path,
+            state_path,
+        )
         from .multibusiness_presenter import MultiBusinessPresenter
         self.multi_business_presenter = MultiBusinessPresenter(self.multi_business_analysis_service)
         from .presenters import OverviewPresenter, TopicPresenter
         self.overview_presenter = OverviewPresenter(self)
         self.topic_presenter = TopicPresenter(self)
+        self._datasets_cache: list[dict[str, Any]] | None = None
+        self._unified_dataset_id: str | None = None
         cached_bundle = lru_cache(maxsize=64)(self._bundle_uncached)
         self._bundle_cache_clear = cached_bundle.cache_clear
 
@@ -134,7 +158,6 @@ class AnalyticsRuntime:
         self.agent_tools = build_agent_tool_registry()
         self.state_store = None
         if self.app_mode == "private":
-            state_path = Path(os.getenv("CROSSBORDER_STATE_DB", ROOT / "database" / "crossborder_state.db"))
             self.state_store = StateStore(state_path)
         self.work_item_service = WorkItemService(self.app_mode, self.state_store)
         self._work_items = self.work_item_service.work_items
@@ -160,12 +183,91 @@ class AnalyticsRuntime:
         self._bundle_cache_clear()
         self.analysis_query_service.clear_cache()
         self.topic_presenter.clear_cache()
+        self.multi_business_presenter.clear_cache()
+        self.dataset_capability_service.clear_cache()
+        self._datasets_cache = None
 
     def scenario(self, dataset_id: str) -> DemoScenario:
         return self.dataset_service.scenario(dataset_id)
 
     def date_bounds(self, dataset_id: str = "demo-all") -> tuple[str, str]:
         return self.dataset_service.date_bounds(dataset_id)
+
+    def dataset_capabilities(
+        self,
+        dataset_id: str,
+        *,
+        fact: str | None = None,
+        start: str | None = None,
+        end: str | None = None,
+    ) -> dict[str, Any]:
+        return self.dataset_capability_service.discover(
+            dataset_id, fact=fact, start=start, end=end,
+        )
+
+    def unified_dataset_preview(self) -> dict[str, Any]:
+        return self.unified_dataset_preview_service.preview()
+
+    def ensure_unified_dataset(self) -> dict[str, Any]:
+        preview = self.unified_dataset_preview()
+        source_dataset_id = str(preview["sources"][1]["dataset_id"])
+        available = {
+            str(item["dataset_id"])
+            for item in self.multi_business_analysis_service.list_datasets()
+        }
+        if source_dataset_id not in available:
+            imported = self.multi_business_import_service.import_directory(
+                ROOT / "data" / "AdventureWorksDW-data"
+            )
+            if imported.get("status") != "READY":
+                raise RuntimeError("AdventureWorks multi-business import was not ready")
+        result = self.unified_dataset_materialization_service.materialize()
+        self._unified_dataset_id = str(result["dataset_id"])
+        self.clear_analysis_cache()
+        return result
+
+    def unified_dataset_id(self) -> str | None:
+        if self._unified_dataset_id:
+            return self._unified_dataset_id
+        for scenario in self._imported_scenarios():
+            if (
+                (scenario.metadata or {}).get("import_origin") == "unified"
+                and scenario.dataset_id.startswith("unified-")
+            ):
+                self._unified_dataset_id = scenario.dataset_id
+                return scenario.dataset_id
+        return None
+
+    def business_datasets(self) -> list[dict[str, Any]]:
+        items = self.multi_business_presenter.datasets()
+        unified_id = self.unified_dataset_id()
+        if self.app_mode == "private" and unified_id:
+            return [item for item in items if item["dataset_id"] == unified_id]
+        return items
+
+    def unified_lifecycle_status(self) -> dict[str, Any]:
+        dataset_id = self.unified_dataset_id()
+        if not dataset_id:
+            raise KeyError("unified dataset is unavailable")
+        return self.unified_dataset_lifecycle_service.status(dataset_id)
+
+    def deactivate_unified_sources(self) -> dict[str, Any]:
+        dataset_id = self.unified_dataset_id()
+        if not dataset_id:
+            raise KeyError("unified dataset is unavailable")
+        result = self.unified_dataset_lifecycle_service.deactivate_sources(dataset_id)
+        self.clear_analysis_cache()
+        return result
+
+    def restore_unified_sources(self, dataset_ids: list[str]) -> dict[str, Any]:
+        result = self.unified_dataset_lifecycle_service.restore_sources(dataset_ids)
+        self.clear_analysis_cache()
+        return result
+
+    def purge_eligible_unified_sources(self) -> dict[str, Any]:
+        result = self.unified_dataset_lifecycle_service.purge_eligible()
+        self.clear_analysis_cache()
+        return result
 
     def _bundle_uncached(
         self,
@@ -286,8 +388,23 @@ class AnalyticsRuntime:
         return self.topic_presenter.export(dataset_id, topic, start, end, market, category, search)
 
     def datasets(self) -> list[dict[str, Any]]:
+        if self._datasets_cache is not None:
+            return [dict(item) for item in self._datasets_cache]
         items = []
-        for scenario in SCENARIOS + self._imported_scenarios():
+        imported = self._imported_scenarios()
+        unified = [
+            scenario for scenario in imported
+            if (
+                (scenario.metadata or {}).get("import_origin") == "unified"
+                and scenario.dataset_id.startswith("unified-")
+            )
+        ]
+        private_uploads = [
+            scenario for scenario in imported
+            if (scenario.metadata or {}).get("import_origin") == "web"
+        ]
+        scenarios = tuple(unified + private_uploads) if self.app_mode == "private" and unified else SCENARIOS + imported
+        for scenario in scenarios:
             context = self._context_for(scenario.dataset_id)
             start, end = self.date_bounds(scenario.dataset_id)
             profile_frame = context.analysis_data
@@ -311,7 +428,8 @@ class AnalyticsRuntime:
                 "updated_at": scenario.created_at or pd.Timestamp.now().isoformat(),
                 "is_demo": scenario.is_demo,
             })
-        return items
+        self._datasets_cache = items
+        return [dict(item) for item in items]
 
     def dataset_detail(self, dataset_id: str) -> tuple[dict, Any]:
         bundle = self.bundle(dataset_id)
@@ -323,7 +441,8 @@ class AnalyticsRuntime:
         query_runs = bundle.metadata.get("query_runs", [])
         lineage = (
             {"source": SAMPLE.name, "scenario_filters": scenario.filters, "raw_read_only": True}
-            if scenario.is_demo else context.lineage
+            if scenario.is_demo and (scenario.metadata or {}).get("import_origin") != "unified"
+            else context.lineage
         )
         profile_frame = context.analysis_data
         for field, values in scenario.filters.items():
@@ -404,6 +523,7 @@ class AnalyticsRuntime:
         amount_semantic: str,
         source_currency: str | None,
         target_currency: str,
+        target_dataset_id: str | None = None,
     ) -> dict[str, Any]:
         return self.dataset_service.import_datasets(
             loaded_files,
@@ -413,6 +533,7 @@ class AnalyticsRuntime:
             amount_semantic=amount_semantic,
             source_currency=source_currency,
             target_currency=target_currency,
+            target_dataset_id=target_dataset_id,
         )
 
     def update_work_item(self, item_id: str, payload: dict[str, Any]) -> dict[str, Any]:

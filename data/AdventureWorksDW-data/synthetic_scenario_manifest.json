@@ -1,0 +1,123 @@
+{
+  "title": "AdventureWorksDW synthetic business data extension",
+  "warning": "SIMULATED DATA. These files are not original AdventureWorks facts and must not be presented as real business records.",
+  "data_origin": "synthetic_extension",
+  "generator_version": "1.0.0",
+  "seed": 20260728,
+  "generated_at": "2026-07-28T00:00:00.000Z",
+  "source": {
+    "sales_file": "FactInternetSales.csv",
+    "source_sales_line_count": 60398,
+    "source_order_count": 27659,
+    "min_order_date": "2010-12-29",
+    "max_order_date": "2014-01-28"
+  },
+  "scenario_window": {
+    "start_date": "2013-10-01",
+    "end_date": "2014-01-28"
+  },
+  "scenarios": [
+    {
+      "scenario_id": "SCN_AD_DE_SEARCH_EFFICIENCY_DECLINE",
+      "description": "German generic-search spend rises while conversion efficiency falls.",
+      "ground_truth_filter": "campaign_id = CMP-DE-SEARCH-GENERIC and ad_date in scenario window",
+      "expected_signal": "daily spend > 2x prior 120-day average and conversion rate declines"
+    },
+    {
+      "scenario_id": "SCN_RET_CLOTHING_SIZE_SPIKE",
+      "description": "Clothing size-related returns increase.",
+      "ground_truth_filter": "product_category_key = 3 and order date in scenario window and reason is size-related",
+      "expected_signal": "size/fit returns rise relative to the earlier period"
+    },
+    {
+      "scenario_id": "SCN_LOGISTICS_EU_CUSTOMS_DELAY",
+      "description": "GlobalPost European shipments experience customs delays.",
+      "ground_truth_filter": "carrier_id = CAR-003, destination_region = Europe, ship_date in scenario window",
+      "expected_signal": "customs holds and delivery delay days rise"
+    }
+  ],
+  "observed_metrics": {
+    "advertising": {
+      "prior_120d_average_daily_spend": 71.23,
+      "scenario_120d_average_daily_spend": 395.8,
+      "spend_change_pct": 455.69,
+      "prior_120d_conversion_rate": 0.03049,
+      "scenario_120d_conversion_rate": 0.012249,
+      "conversion_rate_change_pct": -59.82
+    },
+    "returns": {
+      "prior_120d_clothing_line_count": 3085,
+      "prior_120d_size_return_count": 135,
+      "prior_120d_size_return_rate": 0.04376,
+      "scenario_120d_clothing_line_count": 3029,
+      "scenario_120d_size_return_count": 627,
+      "scenario_120d_size_return_rate": 0.206999,
+      "size_return_rate_change_pct": 373.03
+    },
+    "logistics": {
+      "prior_120d_comparable_shipment_count": 1413,
+      "prior_120d_average_delay_days": 0.76,
+      "scenario_120d_shipment_count": 1441,
+      "scenario_120d_average_delay_days": 8,
+      "average_delay_days_change_pct": 951.53
+    }
+  },
+  "outputs": [
+    {
+      "file": "dim_campaign.csv",
+      "row_count": 18,
+      "sha256": "28c8cfa5a0f68a5cc5cb57cb0b86ccaaf797e9e8fc3bdd4c2cae25d08941988b"
+    },
+    {
+      "file": "dim_carrier.csv",
+      "row_count": 4,
+      "sha256": "3d4e36b050897d4e5368b698734292c6a817a897e65580b0132352e22b4f0699"
+    },
+    {
+      "file": "dim_return_reason.csv",
+      "row_count": 6,
+      "sha256": "725a84007b351810995b07a6da3abfb43f4b39638dc0a16eb49a6c8b67e89afe"
+    },
+    {
+      "file": "fact_ad_performance_daily.csv",
+      "row_count": 20286,
+      "sha256": "1f5be5a8a1303eaa246baa879097f3d7d2dc45948e118b286834f0555b9cabd1"
+    },
+    {
+      "file": "bridge_order_attribution.csv",
+      "row_count": 14080,
+      "sha256": "72460ee3adc972d80f107beddaf8b7392170a9018d12fc001a8f2218d12cf8d2"
+    },
+    {
+      "file": "fact_returns.csv",
+      "row_count": 2784,
+      "sha256": "231a2f40bf236723939c357c248243bace614c99a92eb3ba20709eccf201a5f0"
+    },
+    {
+      "file": "fact_shipments.csv",
+      "row_count": 27659,
+      "sha256": "e179b0b847ebe77dc02002c5aa415d590a47975f99e78c3b7573995af14b49da"
+    },
+    {
+      "file": "fact_tracking_events.csv",
+      "row_count": 203579,
+      "sha256": "1af0a50df5739fddf1e22ec3df7cd8abb07a675d6f09799284a5eb20679f2717"
+    }
+  ],
+  "validation": {
+    "status": "passed",
+    "checks": [
+      "all attribution orders exist in FactInternetSales",
+      "clicks <= impressions and conversions <= clicks",
+      "attribution credit per order <= 1",
+      "returns link to existing order lines",
+      "refund amount <= original line sales amount",
+      "return request date > actual delivery date",
+      "one shipment per order",
+      "tracking events are chronological",
+      "customs events occur only on cross-border shipments",
+      "all rows carry synthetic provenance metadata",
+      "all three planted scenarios pass detectability thresholds"
+    ]
+  }
+}

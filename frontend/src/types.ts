@@ -14,6 +14,27 @@ export interface ApiEnvelope<T> {
 
 export type BusinessTopic = "advertising" | "returns" | "logistics";
 
+export interface VisualizationField {
+  field: string;
+  label: string;
+  format: string;
+}
+
+export interface VisualizationContract {
+  id: string;
+  type: "line" | "bar" | "pie";
+  title: string;
+  dimension: VisualizationField;
+  series: VisualizationField[];
+  rows: Array<Record<string, string | number | boolean | null>>;
+}
+
+export interface TableContract {
+  columns: VisualizationField[];
+  rows: Array<Record<string, string | number | boolean | null>>;
+  pagination: { page: number; page_size: number; total: number; pages: number };
+}
+
 export interface BusinessDataset {
   dataset_id: string;
   name: string;
@@ -69,6 +90,9 @@ export interface BusinessTopicData {
   dataset_id: string;
   scope_id: string;
   period: { start: string; end: string };
+  data_state?: DataState;
+  available_periods?: Array<{ start: string; end: string }>;
+  recommended_period?: { start: string; end: string };
   filters: Record<string, string>;
   filter_options: Record<string, string[]>;
   data_source: { is_simulated: boolean; label: string; description: string; data_origin: string };
@@ -82,7 +106,10 @@ export interface BusinessTopicData {
   actions: Array<{ anomaly_id: string; priority: string; title: string; threshold: string; evidence_ids: string[] }>;
   evidence: BusinessEvidence[];
   details: Array<Record<string, string | number | null>>;
+  pagination?: { page: number; page_size: number; total: number; pages: number };
   tracking_exceptions?: Array<Record<string, string | number | null>> | null;
+  visualizations?: VisualizationContract[];
+  table?: TableContract | null;
 }
 
 export interface Kpi {
@@ -241,6 +268,13 @@ export interface OverviewMethodologyItem {
 }
 
 export interface OverviewData {
+  scope_id?: string;
+  data_state?: DataState;
+  available_periods?: AvailablePeriod[];
+  recommended_period?: { start: string; end: string } | null;
+  requested_period?: { start: string; end: string } | null;
+  visualizations?: VisualizationContract[];
+  table?: TableContract | null;
   period: OverviewPeriod;
   current_period: OverviewPeriod;
   comparison_period: OverviewPeriod;
@@ -311,17 +345,7 @@ export interface TopicFinding {
   finding: string;
 }
 
-export interface TopicEvidence {
-  id: string;
-  metric: string;
-  value: number | null;
-  unit: string;
-  claim: string;
-  formula: string;
-  sample_size: number;
-  confidence: string;
-  source_fields: string;
-}
+export type TopicEvidence = Partial<components["schemas"]["TopicEvidenceContract"]> & Pick<components["schemas"]["TopicEvidenceContract"], "contract_version" | "id" | "metric">;
 
 export interface TopicAction {
   id: string;
@@ -329,13 +353,15 @@ export interface TopicAction {
   action: string;
   owner: string;
   validation_period: string;
+  trigger_condition?: string | null;
 }
 
 export interface TopicDecisionTrend {
   title: string;
   format: TopicValueFormat;
-  current_period: OverviewPeriod;
-  comparison_period: OverviewPeriod;
+  grain: "day" | "week" | "month";
+  current_period: { start: string | null; end: string | null };
+  comparison_period: { start: string | null; end: string | null };
   rows: Array<{
     label: string;
     current_period: string;
@@ -363,6 +389,12 @@ export interface TopicDecisionBoard {
   trend: TopicDecisionTrend;
   anomalies: TopicDecisionItem[];
   drivers: TopicDecisionItem[];
+  state?: {
+    status: "ANOMALY" | "HEALTHY" | "INSUFFICIENT";
+    title: string;
+    description: string;
+    missing_fields: string[];
+  };
 }
 
 export interface TopicReport {
@@ -378,6 +410,13 @@ export interface TopicReport {
 
 export interface TopicData {
   topic: string;
+  scope_id?: string;
+  data_state?: DataState;
+  available_periods?: AvailablePeriod[];
+  recommended_period?: { start: string; end: string } | null;
+  requested_period?: { start: string; end: string } | null;
+  visualizations?: VisualizationContract[];
+  table?: TableContract | null;
   summary: string;
   metrics: TopicMetric[];
   trend: TopicTrend;
@@ -409,6 +448,37 @@ export interface DatasetSummary {
   period_end: string;
   updated_at: string;
   is_demo: boolean;
+}
+
+export type DataState = "READY" | "EMPTY" | "OUT_OF_RANGE" | "INSUFFICIENT_DATA" | "INCOMPLETE_PERIOD" | "FAILED" | "FATAL";
+
+export interface AvailablePeriod {
+  start: string;
+  end: string;
+  row_count: number;
+}
+
+export interface FactCapability {
+  fact: "orders" | "advertising" | "refunds" | "logistics";
+  topics: string[];
+  state: DataState;
+  source_table: string;
+  date_field: string;
+  available_periods: AvailablePeriod[];
+  recommended_period: { start: string; end: string } | null;
+  requested_period: { start: string; end: string } | null;
+  row_count: number;
+  missing_fields: string[];
+  quality_state: string;
+  simulation_state: "ACTUAL" | "SIMULATED" | "MIXED";
+  recommendation_policy: string;
+  limitations: string[];
+}
+
+export interface DatasetCapability {
+  dataset_id: string;
+  contract_version: "1.0.0";
+  facts: Record<string, FactCapability>;
 }
 
 export interface DecisionDriver {

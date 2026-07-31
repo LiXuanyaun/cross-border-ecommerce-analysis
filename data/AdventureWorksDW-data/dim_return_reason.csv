@@ -1,0 +1,7 @@
+return_reason_id,return_reason_code,reason_category,reason_description,synthetic_note,data_origin,generator_version,scenario_id,seed,generated_at
+RR-001,SIZE_TOO_SMALL,Size / fit,Customer reported item too small,SIMULATED reason dimension,synthetic_extension,1.0.0,SCN_RET_CLOTHING_SIZE_SPIKE,20260728,2026-07-28T00:00:00.000Z
+RR-002,SIZE_TOO_LARGE,Size / fit,Customer reported item too large,SIMULATED reason dimension,synthetic_extension,1.0.0,SCN_RET_CLOTHING_SIZE_SPIKE,20260728,2026-07-28T00:00:00.000Z
+RR-003,DAMAGED_IN_TRANSIT,Logistics,Item damaged during transport,SIMULATED reason dimension,synthetic_extension,1.0.0,BASELINE,20260728,2026-07-28T00:00:00.000Z
+RR-004,PRODUCT_DEFECT,Quality,Product defect reported,SIMULATED reason dimension,synthetic_extension,1.0.0,BASELINE,20260728,2026-07-28T00:00:00.000Z
+RR-005,NOT_AS_DESCRIBED,Expectation,Item did not match expectations,SIMULATED reason dimension,synthetic_extension,1.0.0,BASELINE,20260728,2026-07-28T00:00:00.000Z
+RR-006,CHANGED_MIND,Customer preference,Customer changed purchase decision,SIMULATED reason dimension,synthetic_extension,1.0.0,BASELINE,20260728,2026-07-28T00:00:00.000Z

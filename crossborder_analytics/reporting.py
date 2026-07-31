@@ -853,6 +853,7 @@ def export_bundle(
         "project": "CrossBorder AI Analytics",
         "version": "4.0.0",
         "generated_at": bundle.generated_at,
+        "dataset_id": bundle.metadata.get("dataset_id"),
         "scope_id": scope_id,
         "analysis_request": bundle.metadata.get("analysis_request", {}),
         "source": bundle.context.lineage,

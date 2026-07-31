@@ -1,4 +1,5 @@
 import io
+import json
 import socket
 import subprocess
 import sys
@@ -56,6 +57,8 @@ def test_react_primary_pages_at_desktop_and_393px():
     try:
         base_url = "http://127.0.0.1:{}".format(port)
         _wait_for_server(base_url + "/api/v1/health")
+        with urlopen(base_url + "/api/v1/business/datasets", timeout=10) as response:
+            business_dataset_id = json.load(response)["data"][0]["dataset_id"]
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(executable_path=str(EDGE), headless=True)
             page = browser.new_page()
@@ -63,6 +66,17 @@ def test_react_primary_pages_at_desktop_and_393px():
                 page.set_viewport_size({"width": width, "height": height})
                 for route, heading in ROUTES.items():
                     page.goto(base_url + route, wait_until="domcontentloaded", timeout=60_000)
+                    if route != "/data":
+                        dataset_select = page.get_by_role("combobox", name="当前数据集")
+                        dataset_select.wait_for(state="visible", timeout=60_000)
+                        target_dataset = business_dataset_id if route.startswith("/business/") else "demo-all"
+                        if dataset_select.input_value() != target_dataset:
+                            dataset_select.select_option(target_dataset)
+                        page.wait_for_function(
+                            """target => document.querySelector('select[aria-label="当前数据集"]')?.value === target""",
+                            arg=target_dataset,
+                            timeout=60_000,
+                        )
                     page.get_by_role("heading", name=heading, exact=True).wait_for(state="visible", timeout=60_000)
                     page.wait_for_timeout(300)
                     layout = page.evaluate("""() => ({
@@ -78,7 +92,7 @@ def test_react_primary_pages_at_desktop_and_393px():
                     assert layout["pageWidth"] <= layout["viewport"] + 1, (route, width, layout)
                     assert layout["overflowingButtons"] == [], (route, width, layout["overflowingButtons"])
                     if route.startswith("/business/"):
-                        page.get_by_text("模拟数据", exact=True).first.wait_for(state="visible", timeout=60_000)
+                        page.get_by_text("演示推算数据", exact=True).first.wait_for(state="visible", timeout=60_000)
                         page.locator("canvas").first.wait_for(state="visible", timeout=60_000)
                         business_layout = page.evaluate("""() => {
                             const pageMain = Array.from(document.querySelectorAll('main')).at(-1);
@@ -108,6 +122,45 @@ def test_react_primary_pages_at_desktop_and_393px():
                     with Image.open(io.BytesIO(screenshot)) as image:
                         extrema = image.convert("RGB").resize((64, 64)).getextrema()
                     assert any(low != high for low, high in extrema), (route, width)
+
+            # USER periods survive SPA topic changes; recovery returns to fact-bound AUTO.
+            page.set_viewport_size({"width": 1440, "height": 1000})
+            page.goto(base_url + "/analytics?topic=market", wait_until="domcontentloaded", timeout=60_000)
+            dataset_select = page.get_by_role("combobox", name="当前数据集")
+            dataset_select.select_option(business_dataset_id)
+            page.get_by_role("heading", name="专题分析", exact=True).wait_for(state="visible", timeout=60_000)
+            for topic_id, topic_label in (("market", "市场"), ("product", "商品"), ("customer", "客户"), ("profit", "利润"), ("returns", "退货")):
+                page.get_by_role("button", name=topic_label).click()
+                page.wait_for_function(
+                    "topic => new URL(location.href).searchParams.get('topic') === topic",
+                    arg=topic_id,
+                    timeout=60_000,
+                )
+                page.get_by_role("heading", name="本期摘要", exact=True).wait_for(state="visible", timeout=60_000)
+            page.get_by_label("开始日期").fill("2030-01-01")
+            page.get_by_label("结束日期").fill("2030-12-31")
+            page.get_by_text("手动范围", exact=True).wait_for(state="visible", timeout=60_000)
+            page.get_by_text("当前选择时期没有订单事实", exact=True).wait_for(state="visible", timeout=60_000)
+            assert page.locator("canvas").count() == 0
+
+            page.get_by_role("link", name="多业务分析").click()
+            page.get_by_role("heading", name="多业务专题分析", exact=True).wait_for(state="visible", timeout=60_000)
+            assert page.get_by_label("开始日期").input_value() == "2030-01-01"
+            assert page.get_by_label("结束日期").input_value() == "2030-12-31"
+            page.get_by_role("link", name="退款分析").click()
+            page.get_by_text("当前选择时期没有该专题事实", exact=True).wait_for(state="visible", timeout=60_000)
+            assert page.get_by_label("开始日期").input_value() == "2030-01-01"
+            assert page.get_by_label("结束日期").input_value() == "2030-12-31"
+            page.get_by_role("button", name="使用可用时期").click()
+            page.get_by_text("系统推荐", exact=True).wait_for(state="visible", timeout=60_000)
+
+            # Dataset changes clear stale topic filters before applying the new recommendation.
+            page.get_by_role("link", name="专题分析").click()
+            page.get_by_role("heading", name="专题分析", exact=True).wait_for(state="visible", timeout=60_000)
+            page.get_by_label("搜索明细").fill("stale-filter")
+            page.wait_for_function("() => new URL(location.href).searchParams.has('search')", timeout=60_000)
+            dataset_select.select_option("demo-all")
+            page.wait_for_function("() => !new URL(location.href).searchParams.has('market') && !new URL(location.href).searchParams.has('category') && !new URL(location.href).searchParams.has('search')", timeout=60_000)
             browser.close()
     finally:
         process.terminate()

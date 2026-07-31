@@ -7,6 +7,13 @@ from crossborder_analytics.decision_brief import build_decision_brief
 from .runtime import _clean
 
 
+BUSINESS_TOPIC_TERMS = {
+    "advertising": ("广告", "投放", "campaign", "roas", "cpa", "cvr"),
+    "returns": ("退款", "退货", "return", "refund"),
+    "logistics": ("物流", "运输", "履约", "清关", "承运", "logistics", "shipment", "carrier"),
+}
+
+
 class AgentContextBuilder:
     def __init__(self, runtime) -> None:
         self.runtime = runtime
@@ -47,7 +54,12 @@ class AgentContextBuilder:
             item["dataset_id"] for item in self.runtime.multi_business_analysis_service.list_datasets()
         }
         if dataset_id in business_dataset_ids:
-            for business_topic in ("advertising", "returns", "logistics"):
+            selected_business_topics = [
+                topic
+                for topic, terms in BUSINESS_TOPIC_TERMS.items()
+                if any(term in lowered for term in terms)
+            ]
+            for business_topic in selected_business_topics:
                 business_analysis[business_topic] = self.runtime.multi_business_analysis_service.analyze(
                     business_topic,
                     dataset_id,

@@ -125,7 +125,7 @@ function workflowTone(status: string): "red" | "orange" | "blue" | "green" | "ne
 }
 
 export function OverviewPage() {
-  const { datasetId, start, end } = useAppState();
+  const { datasetId, start, end, setAutomaticRange } = useAppState();
   const queryClient = useQueryClient();
   const [grain, setGrain] = useState<"day" | "week">("day");
   const [drawer, setDrawer] = useState<DrawerState>(null);
@@ -138,6 +138,7 @@ export function OverviewPage() {
       api<OverviewData>(
         `/overview${queryString({ dataset_id: datasetId, start, end })}`,
       ),
+    enabled: Boolean(datasetId && (Boolean(start && end) || (!start && !end))),
   });
 
   if (query.isLoading) return <OverviewLoading />;
@@ -151,6 +152,12 @@ export function OverviewPage() {
 
   const envelope = query.data!;
   const data = envelope.data;
+  if (data.data_state && ["EMPTY", "OUT_OF_RANGE", "INSUFFICIENT_DATA", "FAILED", "FATAL"].includes(data.data_state)) {
+    return <OverviewRangeNotice data={data} useAvailablePeriod={() => {
+      const period = data.recommended_period;
+      if (period) setAutomaticRange(period.start, period.end, "orders");
+    }} />;
+  }
   const quality = Number(envelope.meta.quality_score ?? 0);
   const updatedAt = String(envelope.meta.generated_at ?? "");
   const taskStatus = (task: OverviewTask) => statusOverrides[task.id] ?? task.status;
@@ -297,6 +304,12 @@ export function OverviewPage() {
       </Drawer>
     </div>
   );
+}
+
+function OverviewRangeNotice({ data, useAvailablePeriod }: { data: OverviewData; useAvailablePeriod: () => void }) {
+  const selected = data.requested_period ?? data.selection_period;
+  const available = data.available_periods?.map(item => `${item.start} 至 ${item.end}`).join("；") || "暂无可用时期";
+  return <div className="page-enter p-4 md:p-6"><h1 className="text-[24px] font-semibold text-ink">经营总览</h1><section role="status" className="mt-5 border-l-4 border-[#f79009] bg-[#fffaeb] px-4 py-4 text-[#7a2e0e]"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><h2 className="text-sm font-semibold">当前选择时期没有订单事实</h2><p className="mt-1 text-xs leading-5">选择时期：{selected.start || "未指定"} 至 {selected.end || "未指定"}</p><p className="break-words text-xs leading-5">可用时期：{available}</p></div>{data.recommended_period && <Button className="shrink-0" onClick={useAvailablePeriod}>使用可用时期</Button>}</div></section></div>;
 }
 
 function SectionTitle({ icon: Icon, title, action, onAction }: { icon: typeof LineChart; title: string; action: string; onAction: () => void }) {

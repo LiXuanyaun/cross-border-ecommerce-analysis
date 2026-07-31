@@ -243,9 +243,20 @@ class AnalysisService:
             if self.backend == "sql" and self.database_path is not None and not run_context.fatal_issues
             else None
         )
-        cached_artifacts = store.load(phase2_scope_id) if store else None
+        artifact_versions = {
+            "metrics": "1.0.0", "anomaly_rules": "1.0.0",
+            "diagnosis": "1.2.0", "recommendations": "1.1.0",
+            "insights": "1.0.0", "quality": "1.1.1",
+        }
+        cached_artifacts = (
+            store.load(
+                phase2_scope_id,
+                expected_catalog_versions=artifact_versions,
+            )
+            if store else None
+        )
         if not run_context.fatal_issues and cached_artifacts is None:
-            phase2_quality = assess_business_quality(context, phase2_dataset_id, phase2_scope_id)
+            phase2_quality = assess_business_quality(run_context, phase2_dataset_id, phase2_scope_id)
             if self.backend == "sql" and run_context.metadata.get("fx_complete") is not False:
                 phase2_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="phase2-metrics")
                 phase2_future = phase2_executor.submit(
@@ -271,7 +282,7 @@ class AnalysisService:
             "database_schema_version": run_context.metadata.get("database_schema_version"),
             "dataset_id": run_context.metadata.get("dataset_id"),
             "query_runs": repository.query_runs if repository else [],
-            "market_dimension": resolve_market_field(context.analysis_data),
+            "market_dimension": resolve_market_field(run_context.analysis_data),
             "product_detail_queries": [
                 "product_detail_summary", "product_detail_monthly",
                 "product_detail_market", "product_detail_customers",
@@ -294,7 +305,7 @@ class AnalysisService:
         scope_id = phase2_scope_id
         bundle.metadata.update({"scope_id": scope_id, "analysis_request": request.to_dict()})
         if run_context.fatal_issues:
-            quality = phase2_quality or assess_business_quality(context, dataset_id, scope_id)
+            quality = phase2_quality or assess_business_quality(run_context, dataset_id, scope_id)
             (
                 artifacts.data_quality,
                 artifacts.data_quality_dimensions,
@@ -305,12 +316,9 @@ class AnalysisService:
             ) = quality
             return CrossBorderAnalysisBundle(bundle, artifacts)
         if store:
-            store.begin_run(scope_id, dataset_id, request, {
-                "metrics": "1.0.0", "anomaly_rules": "1.0.0",
-                "diagnosis": "1.2.0", "recommendations": "1.1.0", "insights": "1.0.0",
-            })
+            store.begin_run(scope_id, dataset_id, request, artifact_versions)
         try:
-            quality = phase2_quality or assess_business_quality(context, dataset_id, scope_id)
+            quality = phase2_quality or assess_business_quality(run_context, dataset_id, scope_id)
             (
                 artifacts.data_quality,
                 artifacts.data_quality_dimensions,

@@ -81,31 +81,42 @@ interface ImportFilePreview {
   filename: string;
   source_file_id: string;
   status: string;
-  metadata: {
+  metadata?: {
     rows: number;
     columns: number;
     file_size: number;
     encoding: string | null;
   };
-  sheets: string[];
-  selected_sheet: string | null;
+  sheets?: string[];
+  selected_sheet?: string | null;
   columns: string[];
-  field_mappings: ImportFieldMapping[];
-  issues: ImportIssue[];
-  capabilities: Array<{ id: string; name: string; status: string; reason: string }>;
+  field_mappings?: ImportFieldMapping[];
+  issues?: ImportIssue[];
+  capabilities?: Array<{ id: string; name: string; status: string; reason: string }>;
+  file_type?: string;
+  table?: string | null;
+  grain?: string;
+  business_key?: string[];
+  row_count?: number;
+  field_preview?: Array<Record<string, unknown>>;
+  is_simulated?: boolean;
 }
 
 interface ImportPreview {
+  preview_id: string;
+  expires_at: string;
   status: string;
   file_count: number;
   total_rows: number;
   files: ImportFilePreview[];
   batch_issues: ImportIssue[];
   next_step: string;
+  is_simulated?: boolean;
 }
 
 interface ImportConfiguration {
   datasetName: string;
+  targetDatasetId: string;
   selectedSheets: Record<string, string>;
   mapping: Record<string, string>;
   dataGrain: "order" | "order_item";
@@ -121,6 +132,12 @@ interface ImportCommitResult {
   source_file_ids: string[];
   reused: boolean;
   row_count: number;
+  merged?: boolean;
+  parent_dataset_id?: string | null;
+  previous_row_count?: number;
+  appended_row_count?: number;
+  skipped_row_count?: number;
+  failed_files?: Array<{ filename: string; status: string; row_count: number; issues: ImportIssue[] }>;
   issues: ImportIssue[];
 }
 
@@ -137,11 +154,17 @@ export function DataHubPage() {
   const [committing, setCommitting] = useState(false);
   const [commitError, setCommitError] = useState("");
   const [commitResult, setCommitResult] = useState<ImportCommitResult | null>(null);
+  const [pendingDatasetId, setPendingDatasetId] = useState("");
   const [archiving, setArchiving] = useState(false);
   const [archiveError, setArchiveError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const datasets = useQuery({ queryKey: ["datasets"], queryFn: () => api<DatasetSummary[]>("/datasets") });
+  const datasets = useQuery({
+    queryKey: ["datasets"],
+    queryFn: () => api<DatasetSummary[]>("/datasets"),
+    staleTime: 5 * 60_000,
+    refetchOnMount: false,
+  });
   const detail = useQuery({
     queryKey: ["dataset", datasetId],
     queryFn: () => api<DetailData>(`/datasets/${datasetId}`),
@@ -151,6 +174,7 @@ export function DataHubPage() {
     () => (datasets.data?.data ?? []).filter(item => `${item.name}${item.description}`.toLowerCase().includes(search.toLowerCase())),
     [datasets.data, search],
   );
+  const catalog = datasets.data?.data ?? [];
 
   async function previewFiles(files: File[], selectedSheets: Record<string, string> = {}) {
     if (!files.length) return;
@@ -176,6 +200,7 @@ export function DataHubPage() {
     const nextFiles = Array.from(files);
     setSelectedFiles(nextFiles);
     setCommitResult(null);
+    setPendingDatasetId("");
     setCommitError("");
     await previewFiles(nextFiles);
   }
@@ -190,11 +215,12 @@ export function DataHubPage() {
   }
 
   async function handleCommit(configuration: ImportConfiguration) {
-    if (!selectedFiles.length) return;
+    if (!preview?.preview_id) return;
     const form = new FormData();
-    selectedFiles.forEach(file => form.append("files", file));
+    form.append("preview_id", preview.preview_id);
     form.append("mapping_json", JSON.stringify(configuration.mapping));
     form.append("dataset_name", configuration.datasetName);
+    if (configuration.targetDatasetId) form.append("target_dataset_id", configuration.targetDatasetId);
     form.append("selected_sheets_json", JSON.stringify(configuration.selectedSheets));
     form.append("data_grain", configuration.dataGrain);
     form.append("amount_semantic", configuration.amountSemantic);
@@ -207,8 +233,12 @@ export function DataHubPage() {
       setCommitResult(response.data);
       if (response.data.status === "READY" && response.data.dataset_id) {
         await queryClient.invalidateQueries({ queryKey: ["datasets"] });
-        setDatasetId(response.data.dataset_id);
-        await queryClient.invalidateQueries({ queryKey: ["dataset", response.data.dataset_id] });
+        if (response.data.merged) {
+          setDatasetId(response.data.dataset_id);
+          setPendingDatasetId("");
+        } else {
+          setPendingDatasetId(response.data.dataset_id);
+        }
       }
     } catch (error) {
       setCommitError(error instanceof Error ? error.message : "正式导入失败");
@@ -296,11 +326,19 @@ export function DataHubPage() {
           ) : activeNav === "导入记录" ? (
             <ImportPreviewPanel
               preview={preview}
+              datasets={catalog}
+              currentDatasetId={datasetId}
               sourceFileCount={selectedFiles.length}
               uploading={uploading}
               committing={committing}
               commitError={commitError}
               commitResult={commitResult}
+              pendingDatasetId={pendingDatasetId}
+              onSwitchDataset={() => {
+                if (!pendingDatasetId) return;
+                setDatasetId(pendingDatasetId);
+                setPendingDatasetId("");
+              }}
               onSheetChange={handleSheetChange}
               onCommit={handleCommit}
             />
@@ -366,20 +404,28 @@ function DatasetList({ items, datasetId, select }: { items: DatasetSummary[]; da
 
 function ImportPreviewPanel({
   preview,
+  datasets,
+  currentDatasetId,
   sourceFileCount,
   uploading,
   committing,
   commitError,
   commitResult,
+  pendingDatasetId,
+  onSwitchDataset,
   onSheetChange,
   onCommit,
 }: {
   preview: ImportPreview | null;
+  datasets: DatasetSummary[];
+  currentDatasetId: string;
   sourceFileCount: number;
   uploading: boolean;
   committing: boolean;
   commitError: string;
   commitResult: ImportCommitResult | null;
+  pendingDatasetId: string;
+  onSwitchDataset: () => void;
   onSheetChange: (filename: string, sheet: string) => Promise<void>;
   onCommit: (configuration: ImportConfiguration) => Promise<void>;
 }) {
@@ -387,6 +433,8 @@ function ImportPreviewPanel({
     return <EmptyState title="暂无导入记录" description="选择 CSV 或 XLSX 后将显示字段映射和质量预检。" />;
   }
   const blocked = preview.status === "BLOCKED";
+  const businessPreview = preview.files.some(file => Boolean(file.file_type));
+  const importableFiles = preview.files.filter(file => file.status === "READY_FOR_CONFIRMATION" && Boolean(file.field_mappings));
   return (
     <div className="space-y-4 p-4">
       {commitError && <ErrorState message={commitError} />}
@@ -402,7 +450,7 @@ function ImportPreviewPanel({
             <div>
               <p className="font-medium">
                 {commitResult.status === "READY"
-                  ? (commitResult.reused ? "已复用现有数据集" : "数据集已正式入库")
+                  ? (commitResult.merged ? (commitResult.reused ? "重复文件已跳过" : "数据已追加并生成新版本") : (commitResult.reused ? "已复用现有数据集" : "数据集已正式入库"))
                   : "正式导入被阻断"}
               </p>
               <p className="mt-1 break-all text-xs text-muted">
@@ -410,9 +458,12 @@ function ImportPreviewPanel({
                   ? `${commitResult.dataset_id} · ${commitResult.row_count.toLocaleString()} 行`
                   : "请按阻断原因修正配置或源文件"}
               </p>
+              {commitResult.merged && commitResult.status === "READY" && <p className="mt-1 text-xs text-muted">原有 {Number(commitResult.previous_row_count ?? 0).toLocaleString()} 行，新增 {Number(commitResult.appended_row_count ?? 0).toLocaleString()} 行，去重 {Number(commitResult.skipped_row_count ?? 0).toLocaleString()} 行</p>}
             </div>
           </div>
           {commitResult.issues.length > 0 && <IssueList issues={commitResult.issues} title="导入结果" compact />}
+          {(commitResult.failed_files ?? []).length > 0 && <IssueList issues={(commitResult.failed_files ?? []).flatMap(file => file.issues.map(issue => ({ ...issue, message: `${file.filename}：${issue.message}` })))} title="失败文件（未入库）" compact />}
+          {pendingDatasetId && <div className="mt-3 flex justify-end"><Button onClick={onSwitchDataset}>{commitResult?.merged ? "查看合并后数据" : "切换到新数据集"}</Button></div>}
         </div>
       )}
       <div className={cx("rounded-md border p-4", blocked ? "border-danger/30 bg-[#fff7f6]" : "border-success/30 bg-[#f6fef9]")}>
@@ -431,7 +482,14 @@ function ImportPreviewPanel({
       {preview.batch_issues.length > 0 && <IssueList issues={preview.batch_issues} title="批次问题" />}
 
       <div className="divide-y divide-line rounded-md border border-line">
-        {preview.files.map(file => (
+      {businessPreview && (
+        <div className="rounded-md border border-[#f9c36a] bg-[#fffaeb] p-4 text-xs leading-5 text-[#7a2e0e]">
+          <p className="font-medium">检测到多业务文件</p>
+          <p className="mt-1">该文件属于 AdventureWorks/多业务分析链路，不是订单事实导入格式，因此不会进入 autoclean 订单导入确认。请使用“多业务分析”对应的专用导入入口。</p>
+        </div>
+      )}
+
+      {preview.files.map(file => (
           <div key={file.source_file_id} className="p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -441,12 +499,13 @@ function ImportPreviewPanel({
                   <Badge tone={file.status === "BLOCKED" || file.status === "FAILED" ? "red" : "green"}>{file.status}</Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted">
-                  {Number(file.metadata.rows ?? 0).toLocaleString()} 行 · {file.metadata.columns} 列
-                  {file.metadata.encoding ? ` · ${file.metadata.encoding}` : ""}
+                  {Number(file.metadata?.rows ?? file.row_count ?? 0).toLocaleString()} 行 · {file.metadata?.columns ?? file.columns.length} 列
+                  {file.metadata?.encoding ? ` · ${file.metadata.encoding}` : ""}
+                  {file.table ? ` · ${file.table}` : ""}
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                {file.sheets.length > 0 && (
+                {(file.sheets ?? []).length > 0 && (
                   <select
                     aria-label={`${file.filename} Sheet`}
                     value={file.selected_sheet ?? ""}
@@ -454,26 +513,28 @@ function ImportPreviewPanel({
                     onChange={event => onSheetChange(file.filename, event.target.value)}
                     className="h-8 rounded-md border border-line bg-white px-2 text-xs outline-none focus:border-brand"
                   >
-                    {file.sheets.map(sheet => <option key={sheet} value={sheet}>{sheet}</option>)}
+                    {(file.sheets ?? []).map(sheet => <option key={sheet} value={sheet}>{sheet}</option>)}
                   </select>
                 )}
                 <p className="text-xs text-muted">{file.source_file_id}</p>
               </div>
             </div>
-            {file.issues.length > 0 && <IssueList issues={file.issues} title="文件问题" compact />}
-            <MappingTable rows={file.field_mappings} />
+            {(file.issues ?? []).length > 0 && <IssueList issues={file.issues ?? []} title="文件问题" compact />}
+            {file.field_mappings ? <MappingTable rows={file.field_mappings} /> : <BusinessFieldPreview file={file} />}
             <div className="mt-3 flex flex-wrap gap-2">
-              {file.capabilities.map(item => (
+              {(file.capabilities ?? []).map(item => (
                 <Badge key={item.id} tone={item.status === "FULL" ? "green" : "neutral"}>{item.name}</Badge>
               ))}
             </div>
           </div>
         ))}
       </div>
-      {!blocked && preview.files.length === sourceFileCount && sourceFileCount > 0 && (
+      {!blocked && !businessPreview && importableFiles.length > 0 && sourceFileCount > 0 && (
         <ImportConfirmationForm
-          key={preview.files.map(item => `${item.source_file_id}-${item.selected_sheet ?? "csv"}`).join("|")}
-          files={preview.files}
+          key={importableFiles.map(item => `${item.source_file_id}-${item.selected_sheet ?? "csv"}`).join("|")}
+          files={importableFiles}
+          datasets={datasets}
+          currentDatasetId={currentDatasetId}
           committing={committing}
           onCommit={onCommit}
         />
@@ -484,23 +545,29 @@ function ImportPreviewPanel({
 
 function ImportConfirmationForm({
   files,
+  datasets,
+  currentDatasetId,
   committing,
   onCommit,
 }: {
   files: ImportFilePreview[];
+  datasets: DatasetSummary[];
+  currentDatasetId: string;
   committing: boolean;
   onCommit: (configuration: ImportConfiguration) => Promise<void>;
 }) {
   const file = files[0];
+  const fieldMappings = file.field_mappings ?? [];
   const [datasetName, setDatasetName] = useState(file.filename.replace(/\.[^.]+$/, ""));
+  const [targetDatasetId, setTargetDatasetId] = useState("");
   const [mapping, setMapping] = useState<Record<string, string>>(() => Object.fromEntries(
-    file.field_mappings.filter(item => item.source_field).map(item => [item.standard_field, item.source_field as string]),
+    fieldMappings.filter(item => item.source_field).map(item => [item.standard_field, item.source_field as string]),
   ));
   const [dataGrain, setDataGrain] = useState<"order" | "order_item">("order");
   const [amountSemantic, setAmountSemantic] = useState<"order_total" | "line_amount">("order_total");
   const [sourceCurrency, setSourceCurrency] = useState("CNY");
   const [targetCurrency, setTargetCurrency] = useState("CNY");
-  const requiredMapped = file.field_mappings
+  const requiredMapped = fieldMappings
     .filter(item => item.required)
     .every(item => Boolean(mapping[item.standard_field]));
   const supportedContract = dataGrain === "order_item" || amountSemantic === "order_total";
@@ -515,6 +582,7 @@ function ImportConfirmationForm({
         if (!canSubmit) return;
         onCommit({
           datasetName,
+          targetDatasetId,
           selectedSheets: Object.fromEntries(
             files.filter(item => item.selected_sheet).map(item => [item.filename, item.selected_sheet as string]),
           ),
@@ -532,7 +600,13 @@ function ImportConfirmationForm({
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <FormField label="数据集名称">
-          <input value={datasetName} onChange={event => setDatasetName(event.target.value)} className="h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand" />
+          <input value={datasetName} disabled={Boolean(targetDatasetId)} onChange={event => setDatasetName(event.target.value)} className="h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand disabled:bg-[#f8fafc]" />
+        </FormField>
+        <FormField label="导入方式">
+          <select aria-label="导入方式" value={targetDatasetId} onChange={event => setTargetDatasetId(event.target.value)} className="h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand">
+            <option value="">新建数据集</option>
+            {datasets.filter(item => !item.is_demo).map(item => <option key={item.dataset_id} value={item.dataset_id}>追加到：{item.name}{item.dataset_id === currentDatasetId ? "（当前）" : ""}</option>)}
+          </select>
         </FormField>
         <FormField label="数据粒度">
           <select value={dataGrain} onChange={event => setDataGrain(event.target.value as "order" | "order_item")} className="h-9 w-full rounded-md border border-line bg-white px-3 text-sm text-ink outline-none focus:border-brand">
@@ -579,7 +653,7 @@ function EditableMappingTable({
   mapping: Record<string, string>;
   setMapping: (mapping: Record<string, string>) => void;
 }) {
-  const visible = file.field_mappings.filter(row => row.required || row.source_field).slice(0, 12);
+  const visible = (file.field_mappings ?? []).filter(row => row.required || row.source_field).slice(0, 12);
   return (
     <div className="overflow-x-auto rounded-md border border-line">
       <table className="min-w-full text-left text-xs">
@@ -659,6 +733,20 @@ function MappingTable({ rows }: { rows: ImportFieldMapping[] }) {
             </tr>
           ))}
         </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BusinessFieldPreview({ file }: { file: ImportFilePreview }) {
+  const rows = file.field_preview ?? [];
+  if (!rows.length) return <p className="mt-3 text-xs text-muted">暂无字段预览</p>;
+  const fields = Object.keys(rows[0] ?? {}).slice(0, 8);
+  return (
+    <div className="mt-3 overflow-x-auto rounded-md border border-line">
+      <table className="min-w-full text-left text-xs">
+        <thead className="border-b border-line bg-[#fafbfc] text-muted"><tr>{fields.map(field => <th key={field} className="whitespace-nowrap px-3 py-2 font-medium">{field}</th>)}</tr></thead>
+        <tbody>{rows.slice(0, 3).map((row, index) => <tr key={index} className="border-b border-line last:border-0">{fields.map(field => <td key={field} className="max-w-[180px] truncate px-3 py-2">{String(row[field] ?? "")}</td>)}</tr>)}</tbody>
       </table>
     </div>
   );

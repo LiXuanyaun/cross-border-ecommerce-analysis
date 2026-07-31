@@ -2,10 +2,14 @@
 from pathlib import Path
 from time import perf_counter
 import argparse
+import platform
+import statistics
+import sys
 
 import pandas as pd
 
 from crossborder_analytics.service import AnalysisService
+from crossborder_api.services import AnalysisQueryService, DatasetService
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +24,14 @@ def parse_args():
     parser.add_argument("--max-seconds", type=float, default=15.0)
     parser.add_argument("--max-database-mb", type=float, default=200.0)
     parser.add_argument("--reuse-database", action="store_true")
+    parser.add_argument("--samples", type=int, default=5)
     return parser.parse_args()
+
+
+def percentile(values: list[float], proportion: float) -> float:
+    ordered = sorted(values)
+    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * proportion)))
+    return ordered[index]
 
 
 def main() -> int:
@@ -39,10 +50,13 @@ def main() -> int:
     frame.to_csv(csv_path, index=False)
 
     service = AnalysisService(cache_dir=OUTPUT / "fx", database_path=database_path)
-    started = perf_counter()
+    prepare_started = perf_counter()
     context = service.prepare(csv_path, source_currency="CNY", target_currency="CNY")
+    prepare_elapsed = perf_counter() - prepare_started
+    analysis_started = perf_counter()
     bundle = service.run(context)
-    elapsed = perf_counter() - started
+    analysis_elapsed = perf_counter() - analysis_started
+    elapsed = prepare_elapsed + analysis_elapsed
     failures = {
         name: result.message
         for name, result in bundle.results.items()
@@ -58,18 +72,41 @@ def main() -> int:
     detail_started = perf_counter()
     detail = service.product_detail(bundle, product_id)
     detail_elapsed = perf_counter() - detail_started
+    query_service = AnalysisQueryService(DatasetService(service, csv_path))
+    page_cold_started = perf_counter()
+    query_service.bundle("demo-all", analysis_mode="topic", topic="market")
+    page_cold_elapsed = perf_counter() - page_cold_started
+    page_hot_samples = []
+    hot_detail_samples = [detail_elapsed]
+    for _ in range(max(1, args.samples)):
+        hot_started = perf_counter()
+        query_service.bundle("demo-all", analysis_mode="topic", topic="market")
+        page_hot_samples.append(perf_counter() - hot_started)
+        hot_detail_started = perf_counter()
+        service.product_detail(bundle, product_id)
+        hot_detail_samples.append(perf_counter() - hot_detail_started)
     database_bytes = sum(
         candidate.stat().st_size
         for candidate in (database_path, Path(str(database_path) + "-wal"), Path(str(database_path) + "-shm"))
         if candidate.exists()
     )
     database_mb = database_bytes / 1024 / 1024
+    print("environment={}".format(platform.platform()))
+    print("python={}".format(sys.version.split()[0]))
+    print("pandas={}".format(pd.__version__))
     print("rows={:,}".format(args.rows))
+    print("cold_prepare_seconds={:.3f}".format(prepare_elapsed))
+    print("cold_analysis_seconds={:.3f}".format(analysis_elapsed))
     print("pipeline_seconds={:.3f}".format(elapsed))
     print("database_mb={:.3f}".format(database_mb))
     print("slowest_query_seconds={:.3f}".format(slowest / 1000))
     print("market_category_query_seconds={:.3f}".format(market_query / 1000))
     print("product_detail_seconds={:.3f}".format(detail_elapsed))
+    print("page_cold_analysis_seconds={:.3f}".format(page_cold_elapsed))
+    print("page_hot_analysis_p50_seconds={:.3f}".format(statistics.median(page_hot_samples)))
+    print("page_hot_analysis_p95_seconds={:.3f}".format(percentile(page_hot_samples, .95)))
+    print("hot_detail_p50_seconds={:.3f}".format(statistics.median(hot_detail_samples)))
+    print("hot_detail_p95_seconds={:.3f}".format(percentile(hot_detail_samples, .95)))
     print("product_detail_query_count={}".format(len(detail["query_runs"])))
     print("storage_reused={}".format(bundle.context.metadata.get("storage_reused")))
     print("dataset_id={}".format(bundle.metadata.get("dataset_id")))

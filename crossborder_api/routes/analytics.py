@@ -8,25 +8,27 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
 
 from ..app_state import envelope, runtime
-from ..schemas import ApiEnvelope
+from ..schemas import ApiEnvelope, TopicResponse
 
 
 router = APIRouter(prefix="/api/v1")
 
 
 @router.get("/overview", response_model=ApiEnvelope[dict[str, Any]])
-def get_overview(dataset_id: str = "demo-all", start: str | None = None, end: str | None = None):
+def get_overview(dataset_id: str, start: str | None = None, end: str | None = None):
     try:
         data, bundle = runtime.overview(dataset_id, start, end)
     except KeyError:
         raise HTTPException(404, "数据集不存在")
-    return envelope(data, bundle, dataset_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return envelope(data, bundle, dataset_id, scope_id=data.get("scope_id"))
 
 
-@router.get("/topics/{topic}", response_model=ApiEnvelope[dict[str, Any]])
+@router.get("/topics/{topic}", response_model=ApiEnvelope[TopicResponse])
 def get_topic(
     topic: str,
-    dataset_id: str = "demo-all",
+    dataset_id: str,
     start: str | None = None,
     end: str | None = None,
     market: str | None = None,
@@ -39,13 +41,15 @@ def get_topic(
         data, bundle = runtime.topic(dataset_id, topic, start, end, market, category, search, page, page_size)
     except KeyError:
         raise HTTPException(404, "分析主题或数据集不存在")
-    return envelope(data, bundle, dataset_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return envelope(data, bundle, dataset_id, scope_id=data.get("scope_id"))
 
 
 @router.get("/topics/{topic}/export")
 def export_topic_details(
     topic: str,
-    dataset_id: str = "demo-all",
+    dataset_id: str,
     start: str | None = None,
     end: str | None = None,
     market: str | None = None,

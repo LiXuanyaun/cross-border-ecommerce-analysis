@@ -4,7 +4,7 @@
 
 The web import flow accepts CSV and Excel order files. v4 also accepts the AdventureWorksDW source adapter input (headerless, pipe-delimited) together with CSV dimension/fact extensions for campaign, carrier, return reason, advertising daily performance, attribution, returns, shipments and tracking events.
 
-The current public contract supports one batch of up to 20 files and blocks unsafe imports before writing business rows.
+The web flow has no fixed file-count limit. Centralized capacity defaults to 100 MB per file and 1 GB per task through `CROSSBORDER_IMPORT_MAX_FILE_BYTES` and `CROSSBORDER_IMPORT_MAX_TASK_BYTES`; unsafe imports are blocked before business rows are written.
 
 ## AdventureWorks Multi-Business Import
 
@@ -32,6 +32,10 @@ Optional fields unlock richer analysis, including market, product, customer, pro
 3. Confirm mapping, data grain, amount meaning and currency.
 4. Commit through `/api/v1/imports`.
 5. Use the returned `dataset_id` in overview, topics, reports and Agent analysis.
+
+## Append To An Existing Web Dataset
+
+The confirmation form can choose `追加到已有数据集`. The client sends the existing Web `dataset_id` as `target_dataset_id` to `/api/v1/imports`. The server validates grain, amount semantics, target currency and cross-batch order IDs, then creates a new versioned child dataset with `parent_dataset_id` and the complete source-file lineage. The parent remains read-only so prior reports and scopes do not drift. Repeating an already imported source file is idempotent; a new file containing an existing order ID is blocked as a whole batch.
 
 ## Safety Rules
 

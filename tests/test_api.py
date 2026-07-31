@@ -11,12 +11,18 @@ from crossborder_api.agent import AgentManager, ProviderStore
 from crossborder_api.main import app, runtime
 
 
-def test_bootstrap_exposes_exact_four_primary_pages():
+def test_bootstrap_exposes_primary_pages_without_implicit_dataset():
     with TestClient(app) as client:
         response = client.get("/api/v1/app/bootstrap")
     assert response.status_code == 200
     labels = [item["label"] for item in response.json()["data"]["navigation"]]
-    assert labels == ["经营总览", "专题分析", "数据中心", "AI分析师"]
+    assert labels == ["经营总览", "专题分析", "多业务分析", "数据中心", "AI分析师"]
+    data = response.json()["data"]
+    assert data["default_dataset_id"] is None
+    assert data["period_source"] == "AUTO"
+    assert data["capability_contract_version"] == "1.0.0"
+    assert data["recommended_period"]["start"] >= data["date_bounds"]["start"]
+    assert data["recommended_period"]["end"] <= data["date_bounds"]["end"]
 
 
 def test_overview_and_topic_use_dataset_and_scope_metadata():
@@ -140,6 +146,31 @@ def test_overview_uses_real_comparison_series_and_complete_operating_modules():
     )
 
 
+def test_unified_overview_uses_active_market_dimension_and_quality_scope():
+    unified_id = next(
+        item["dataset_id"] for item in runtime.datasets()
+        if item["dataset_id"].startswith("unified-")
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            "/api/v1/overview",
+            params={
+                "dataset_id": unified_id,
+                "start": "2024-06-01",
+                "end": "2025-08-31",
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    data = payload["data"]
+    assert len(data["markets"]) == 5
+    assert data["markets"][0]["name"]
+    assert data["tasks"]
+    assert data["insights"]
+    assert payload["meta"]["quality_rating"] in {"A", "B"}
+
+
 def test_overview_falls_back_when_sales_result_is_missing(monkeypatch):
     actual_bundle = runtime.bundle(
         "demo-all", "2023-09-01", "2025-08-31",
@@ -202,8 +233,13 @@ def test_five_topic_views_have_independent_metrics_trends_rankings_and_details()
     )
     assert all(
         item["metric_id"] and item["rule_id"] and item["evidence_ids"]
-        for data in payloads.values()
+        for topic, data in payloads.items()
+        if topic != "customer"
         for item in data["ai"]["actions"]
+    )
+    assert all(
+        item["metric_id"] and item["rule_id"] is None and item["evidence_ids"]
+        for item in payloads["customer"]["ai"]["actions"]
     )
     assert all(
         len({item["finding"] for item in data["ai"]["findings"]}) == len(data["ai"]["findings"])
@@ -283,6 +319,25 @@ def test_import_preview_maps_csv_fields_without_persisting_dataset():
     assert any(item["id"] == "market" and item["status"] == "FULL" for item in file_preview["capabilities"])
 
 
+def test_every_uploaded_file_uses_autoclean_preview_contract():
+    content = (
+        "return_id,sales_order_number,sales_order_line_number,return_quantity,original_order_quantity,refund_amount,original_line_sales_amount\n"
+        "R1,SO1,1,1,1,10,10\n"
+    ).encode("utf-8")
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/imports/preview",
+            files=[("files", ("fact_returns.csv", content, "text/csv"))],
+        )
+
+    assert response.status_code == 200
+    file_preview = response.json()["data"]["files"][0]
+    assert file_preview["status"] == "BLOCKED"
+    assert file_preview["metadata"]["rows"] == 1
+    assert "field_mappings" in file_preview
+    assert any(issue["code"] == "MISSING_REQUIRED_FIELD" for issue in file_preview["issues"])
+
+
 def test_import_preview_reads_xlsx_sheet_names():
     stream = BytesIO()
     with pd.ExcelWriter(stream, engine="openpyxl") as writer:
@@ -304,7 +359,7 @@ def test_import_preview_reads_xlsx_sheet_names():
     assert file_preview["status"] == "READY_FOR_CONFIRMATION"
 
 
-def test_import_preview_blocks_heterogeneous_multi_file_batch():
+def test_import_preview_accepts_heterogeneous_files_for_individual_autoclean():
     first = "order_id,order_date,total_amount\nA1,2025-01-01,10\n".encode("utf-8")
     second = "order_id,order_date,total_amount,country\nA2,2025-01-02,20,US\n".encode("utf-8")
     with TestClient(app) as client:
@@ -318,8 +373,40 @@ def test_import_preview_blocks_heterogeneous_multi_file_batch():
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["status"] == "BLOCKED"
-    assert any(issue["code"] == "FIELD_SET_MISMATCH" for issue in data["batch_issues"])
+    assert data["status"] == "READY_FOR_MAPPING_CONFIRMATION"
+    assert all(item["status"] == "READY_FOR_CONFIRMATION" for item in data["files"])
+    assert not any(issue["code"] == "FIELD_SET_MISMATCH" for issue in data["batch_issues"])
+
+
+def test_mixed_batch_persists_qualified_files_and_reports_failed_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime._service, "database_path", tmp_path / "partial-import.db")
+    runtime.bundle.cache_clear()
+    valid = b"order_id,order_date,total_amount\nA1,2025-01-01,10\n"
+    invalid = b"note,value\nignore,1\n"
+    mapping = json.dumps({"order_id": "order_id", "order_date": "order_date", "total_amount": "total_amount"})
+    with TestClient(app) as client:
+        preview = client.post(
+            "/api/v1/imports/preview",
+            files=[("files", ("valid.csv", valid, "text/csv")), ("files", ("invalid.csv", invalid, "text/csv"))],
+        )
+        preview_data = preview.json()["data"]
+        committed = client.post(
+            "/api/v1/imports",
+            data={
+                "preview_id": preview_data["preview_id"], "mapping_json": mapping,
+                "dataset_name": "部分合格批次", "data_grain": "order",
+                "amount_semantic": "order_total", "source_currency": "CNY", "target_currency": "CNY",
+            },
+        )
+
+    assert preview.status_code == 200
+    assert preview_data["status"] == "READY_FOR_MAPPING_CONFIRMATION"
+    assert committed.status_code == 200
+    result = committed.json()["data"]
+    assert result["status"] == "READY"
+    assert result["row_count"] == 1
+    assert len(result["failed_files"]) == 1
+    assert result["failed_files"][0]["filename"] == "invalid.csv"
 
 
 def test_import_preview_requires_grain_confirmation_for_cross_file_duplicate_order_ids():
@@ -402,6 +489,127 @@ def test_confirmed_single_file_import_is_persisted_and_idempotent(tmp_path, monk
         ).fetchone()[0]
     assert rows == [(first_data["source_file_id"], 2), (first_data["source_file_id"], 3)]
     assert dataset_count == 1
+
+
+def test_single_month_topic_trends_use_daily_buckets_without_fake_comparison(tmp_path, monkeypatch):
+    database_path = tmp_path / "single-month-topic.db"
+    monkeypatch.setattr(runtime._service, "database_path", database_path)
+    runtime.bundle.cache_clear()
+    content = (
+        "order_id,order_date,total_amount,country,product_id,product_name,quantity,customer_id,category\n"
+        "A1,2025-08-01,10,US,P1,Widget,1,C1,Tools\n"
+        "A2,2025-08-02,20,US,P1,Widget,2,C2,Tools\n"
+        "A3,2025-08-03,30,CA,P2,Gadget,1,C3,Home\n"
+    ).encode("utf-8-sig")
+    form = {
+        "mapping_json": json.dumps({
+            "order_id": "order_id", "order_date": "order_date", "total_amount": "total_amount",
+            "country": "country", "product_id": "product_id", "product_name": "product_name",
+            "quantity": "quantity", "customer_id": "customer_id", "category": "category",
+        }),
+        "dataset_name": "单月专题趋势",
+        "data_grain": "order",
+        "amount_semantic": "order_total",
+        "source_currency": "CNY",
+        "target_currency": "CNY",
+    }
+    with TestClient(app) as client:
+        imported = client.post(
+            "/api/v1/imports", data=form,
+            files={"file": ("august.csv", content, "text/csv")},
+        )
+        dataset_id = imported.json()["data"]["dataset_id"]
+        market = client.get("/api/v1/topics/market", params={"dataset_id": dataset_id})
+        product = client.get("/api/v1/topics/product", params={"dataset_id": dataset_id})
+
+    assert imported.status_code == 200
+    assert imported.json()["data"]["status"] == "READY"
+    for response in (market, product):
+        assert response.status_code == 200
+        trend = response.json()["data"]["decision_board"]["trend"]
+        assert trend["grain"] == "day"
+        assert len(trend["rows"]) == 3
+        assert trend["comparison_period"] == {"start": None, "end": None}
+        assert all(row["comparison"] is None for row in trend["rows"])
+
+
+def test_follow_up_import_appends_as_versioned_dataset(tmp_path, monkeypatch):
+    database_path = tmp_path / "append.db"
+    monkeypatch.setattr(runtime._service, "database_path", database_path)
+    runtime.bundle.cache_clear()
+    mapping = json.dumps({
+        "order_id": "order_id", "order_date": "order_date",
+        "total_amount": "total_amount", "country": "country",
+    })
+    form = {
+        "mapping_json": mapping,
+        "dataset_name": "持续订单",
+        "data_grain": "order",
+        "amount_semantic": "order_total",
+        "source_currency": "CNY",
+        "target_currency": "CNY",
+    }
+    first_content = b"order_id,order_date,total_amount,country\nA1,2025-01-01,10,US\nA2,2025-01-02,20,US\n"
+    second_content = b"order_id,order_date,total_amount,country\nA3,2025-02-01,30,US\nA4,2025-02-02,40,US\n"
+    with TestClient(app) as client:
+        first = client.post("/api/v1/imports", data=form, files={"file": ("jan.csv", first_content, "text/csv")})
+        first_id = first.json()["data"]["dataset_id"]
+        appended = client.post(
+            "/api/v1/imports",
+            data={**form, "target_dataset_id": first_id},
+            files={"file": ("feb.csv", second_content, "text/csv")},
+        )
+        new_data = appended.json()["data"]
+        detail = client.get("/api/v1/datasets/{}".format(new_data["dataset_id"])).json()["data"]
+        catalog = client.get("/api/v1/datasets").json()["data"]
+
+    assert first.status_code == 200
+    assert appended.status_code == 200
+    assert new_data["status"] == "READY"
+    assert new_data["merged"] is True
+    assert new_data["parent_dataset_id"] == first_id
+    assert new_data["dataset_id"] != first_id
+    assert new_data["previous_row_count"] == 2
+    assert new_data["appended_row_count"] == 2
+    assert new_data["row_count"] == 4
+    assert detail["lineage"]["parent_dataset_id"] == first_id
+    assert detail["dataset"]["row_count"] == 4
+    assert first_id in {item["dataset_id"] for item in catalog}
+    assert new_data["dataset_id"] in {item["dataset_id"] for item in catalog}
+
+
+def test_follow_up_import_blocks_duplicate_order_without_partial_write(tmp_path, monkeypatch):
+    database_path = tmp_path / "append-conflict.db"
+    monkeypatch.setattr(runtime._service, "database_path", database_path)
+    runtime.bundle.cache_clear()
+    mapping = json.dumps({
+        "order_id": "order_id", "order_date": "order_date",
+        "total_amount": "total_amount", "country": "country",
+    })
+    form = {
+        "mapping_json": mapping,
+        "dataset_name": "重复订单",
+        "data_grain": "order",
+        "amount_semantic": "order_total",
+        "source_currency": "CNY",
+        "target_currency": "CNY",
+    }
+    content = b"order_id,order_date,total_amount,country\nA1,2025-01-01,10,US\n"
+    with TestClient(app) as client:
+        first = client.post("/api/v1/imports", data=form, files={"file": ("jan.csv", content, "text/csv")}).json()["data"]
+        blocked = client.post(
+            "/api/v1/imports",
+            data={**form, "target_dataset_id": first["dataset_id"]},
+            files={"file": ("correction.csv", content.replace(b"10", b"99"), "text/csv")},
+        )
+
+    result = blocked.json()["data"]
+    assert blocked.status_code == 200
+    assert result["status"] == "BLOCKED"
+    assert any(issue["code"] == "GRAIN_CONFLICT" for issue in result["issues"])
+    with sqlite3.connect(database_path) as connection:
+        row_count = connection.execute("SELECT COUNT(*) FROM orders WHERE dataset_id = ?", (first["dataset_id"],)).fetchone()[0]
+    assert row_count == 1
 
 
 def test_imported_dataset_can_be_archived_without_deleting_orders(tmp_path, monkeypatch):
@@ -565,8 +773,8 @@ def test_multi_file_order_import_commits_once_with_file_lineage(tmp_path, monkey
     assert dataset_count == 1
 
 
-def test_multi_file_contract_failure_writes_no_partial_business_rows(tmp_path, monkeypatch):
-    database_path = tmp_path / "multi-blocked.db"
+def test_multi_file_field_drift_is_cleaned_into_one_dataset(tmp_path, monkeypatch):
+    database_path = tmp_path / "multi-cleaned.db"
     monkeypatch.setattr(runtime._service, "database_path", database_path)
     runtime.bundle.cache_clear()
     first = "order_id,order_date,total_amount\nA1,2025-01-01,10\n".encode("utf-8")
@@ -592,12 +800,13 @@ def test_multi_file_contract_failure_writes_no_partial_business_rows(tmp_path, m
 
     assert response.status_code == 200
     data = response.json()["data"]
-    assert data["status"] == "BLOCKED"
-    assert any(issue["code"] == "FIELD_SET_MISMATCH" for issue in data["issues"])
+    assert data["status"] == "READY"
+    assert data["row_count"] == 2
+    assert not any(issue["code"] == "FIELD_SET_MISMATCH" for issue in data["issues"])
     with sqlite3.connect(database_path) as connection:
         assert connection.execute(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='orders'"
-        ).fetchone()[0] == 0
+            "SELECT COUNT(*) FROM orders WHERE dataset_id = ?", (data["dataset_id"],)
+        ).fetchone()[0] == 2
 
 
 def test_order_item_line_amount_counts_unique_orders_and_sums_lines(tmp_path, monkeypatch):

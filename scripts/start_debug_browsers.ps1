@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Url = "http://localhost:8501",
+    [string]$Url = "http://localhost:8000",
     [int]$ChromePort = 9222,
     [int]$EdgePort = 9223,
     [int]$WaitSeconds = 15,

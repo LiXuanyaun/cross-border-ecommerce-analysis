@@ -13,7 +13,7 @@ import {
   UserRound,
   Wrench,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { TrendChart } from "../../components/Charts";
 import { MetricCard } from "../../components/MetricCard";
 import {
@@ -34,6 +34,8 @@ import type {
   DecisionCase,
   OverviewData,
 } from "../../types";
+
+const MarkdownContent = lazy(() => import("./MarkdownContent"));
 
 interface ProviderStatus {
   configured: boolean;
@@ -327,7 +329,7 @@ function ProviderPill({
   );
 }
 
-function ChatMessage({ role, content }: { role: string; content: string }) {
+export function ChatMessage({ role, content }: { role: string; content: string }) {
   return (
     <div className={cx("flex gap-3", role === "user" && "flex-row-reverse")}>
       <div
@@ -340,16 +342,31 @@ function ChatMessage({ role, content }: { role: string; content: string }) {
       </div>
       <div
         className={cx(
-          "max-w-[88%] break-words rounded-lg px-3 py-2 text-sm leading-6 whitespace-pre-wrap",
+          "max-w-[88%] break-words rounded-lg px-3 py-2 text-sm leading-6",
           role === "user"
-            ? "max-h-48 overflow-y-auto bg-[#e8f0ff] text-ink"
+            ? "max-h-48 whitespace-pre-wrap overflow-y-auto bg-[#e8f0ff] text-ink"
             : "scrollbar-thin max-h-[360px] overflow-y-auto border border-line bg-white text-[#344054]",
         )}
       >
-        {content}
+        {role === "assistant" ? (
+          <div className="space-y-2 [&_a]:text-brand [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-line [&_blockquote]:pl-3 [&_li]:ml-5 [&_ol]:list-decimal [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-line [&_td]:p-2 [&_th]:border [&_th]:border-line [&_th]:bg-[#f8fafc] [&_th]:p-2 [&_ul]:list-disc">
+            <DeferredMarkdownContent content={content} />
+          </div>
+        ) : content}
       </div>
     </div>
   );
+}
+
+function DeferredMarkdownContent({ content }: { content: string }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setReady(true), 300);
+    return () => window.clearTimeout(timer);
+  }, []);
+  const fallback = <p className="whitespace-pre-wrap">{content}</p>;
+  if (!ready) return fallback;
+  return <Suspense fallback={fallback}><MarkdownContent content={content} /></Suspense>;
 }
 
 function AnalysisProgress({ events }: { events: AgentEvent[] }) {

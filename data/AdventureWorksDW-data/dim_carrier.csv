@@ -1,0 +1,5 @@
+carrier_id,carrier_name,service_level,carrier_type,synthetic_note,data_origin,generator_version,scenario_id,seed,generated_at
+CAR-001,NorthStar Express,Standard,fictional_synthetic_carrier,SIMULATED carrier; not an original AdventureWorks entity,synthetic_extension,1.0.0,BASELINE,20260728,2026-07-28T00:00:00.000Z
+CAR-002,ParcelBridge,Economy,fictional_synthetic_carrier,SIMULATED carrier; not an original AdventureWorks entity,synthetic_extension,1.0.0,BASELINE,20260728,2026-07-28T00:00:00.000Z
+CAR-003,GlobalPost,International Priority,fictional_synthetic_carrier,SIMULATED carrier; not an original AdventureWorks entity,synthetic_extension,1.0.0,SCN_LOGISTICS_EU_CUSTOMS_DELAY,20260728,2026-07-28T00:00:00.000Z
+CAR-004,EuroFreight,International Economy,fictional_synthetic_carrier,SIMULATED carrier; not an original AdventureWorks entity,synthetic_extension,1.0.0,BASELINE,20260728,2026-07-28T00:00:00.000Z

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from typing import Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 T = TypeVar("T")
 ApiStatus = Literal["SUCCESS", "PARTIAL", "SKIPPED", "FAILED", "FATAL"]
+DataState = Literal[
+    "READY", "EMPTY", "OUT_OF_RANGE", "INSUFFICIENT_DATA", "INCOMPLETE_PERIOD", "FAILED", "FATAL",
+]
 
 
 class ApiMeta(BaseModel):
@@ -24,6 +27,93 @@ class ApiEnvelope(BaseModel, Generic[T]):
     limitations: list[str] = Field(default_factory=list)
 
 
+class AvailablePeriod(BaseModel):
+    start: str
+    end: str
+    row_count: int
+
+
+class FactCapability(BaseModel):
+    fact: Literal["orders", "advertising", "refunds", "logistics"]
+    topics: list[str]
+    state: DataState
+    source_table: str
+    date_field: str
+    available_periods: list[AvailablePeriod]
+    recommended_period: dict[str, str] | None = None
+    requested_period: dict[str, str] | None = None
+    row_count: int
+    missing_fields: list[str]
+    quality_state: str
+    simulation_state: Literal["ACTUAL", "SIMULATED", "MIXED"]
+    recommendation_policy: str
+    limitations: list[str]
+
+
+class DatasetCapability(BaseModel):
+    dataset_id: str
+    contract_version: Literal["1.0.0"]
+    facts: dict[str, FactCapability]
+
+
+class VisualizationField(BaseModel):
+    field: str
+    label: str
+    format: str
+
+
+class VisualizationContract(BaseModel):
+    id: str
+    type: Literal["line", "bar", "pie"]
+    title: str
+    dimension: VisualizationField
+    series: list[VisualizationField]
+    rows: list[dict[str, Any]]
+
+
+class TableContract(BaseModel):
+    columns: list[VisualizationField]
+    rows: list[dict[str, Any]]
+    pagination: dict[str, int]
+
+
+class TopicEvidenceContract(BaseModel):
+    contract_version: Literal["topic-evidence.v1"]
+    id: str
+    metric: str
+    value: float | int | None = None
+    unit: str = ""
+    claim: str
+    formula: str
+    sample_size: int | None = None
+    confidence: str
+    source_fields: list[str] = Field(default_factory=list)
+    period: dict[str, str]
+    filters: dict[str, Any] = Field(default_factory=dict)
+    quality_state: str
+    limitations: list[str] = Field(default_factory=list)
+
+
+class TopicAiPayload(BaseModel):
+    findings: list[dict[str, Any]]
+    evidence: list[TopicEvidenceContract]
+    actions: list[dict[str, Any]]
+
+
+class TopicResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    topic: str
+    summary: str
+    ai: TopicAiPayload
+    data_state: DataState = "READY"
+    available_periods: list[AvailablePeriod] = Field(default_factory=list)
+    recommended_period: dict[str, str] | None = None
+    requested_period: dict[str, str] | None = None
+    visualizations: list[VisualizationContract] = Field(default_factory=list)
+    table: TableContract | None = None
+
+
 class WorkItemPatch(BaseModel):
     workflow_status: Literal["TODO", "IN_PROGRESS", "COMPLETED", "REVIEWED", "CLOSED"]
     owner: str = ""
@@ -35,12 +125,12 @@ class WorkItemPatch(BaseModel):
 
 
 class AgentSessionRequest(BaseModel):
-    dataset_id: str = "demo-all"
+    dataset_id: str
 
 
 class AgentRunRequest(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
-    dataset_id: str = "demo-all"
+    dataset_id: str
     start: str | None = None
     end: str | None = None
     market: str | None = None
@@ -112,6 +202,9 @@ class BusinessTopicData(BaseModel):
     dataset_id: str
     scope_id: str
     period: dict[str, str]
+    data_state: DataState
+    available_periods: list[dict[str, str]]
+    recommended_period: dict[str, str]
     filters: dict[str, Any]
     filter_options: dict[str, list[str]]
     data_source: dict[str, Any]
@@ -124,8 +217,11 @@ class BusinessTopicData(BaseModel):
     actions: list[dict[str, Any]]
     evidence: list[BusinessEvidence]
     details: list[dict[str, Any]]
+    pagination: dict[str, int] = Field(default_factory=dict)
     distribution: dict[str, Any] | None = None
     tracking_exceptions: list[dict[str, Any]] | None = None
+    visualizations: list[VisualizationContract] = Field(default_factory=list)
+    table: TableContract | None = None
 
 
 def safe_value(value: Any) -> Any:

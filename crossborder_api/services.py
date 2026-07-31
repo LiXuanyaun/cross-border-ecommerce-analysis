@@ -81,17 +81,27 @@ class DatasetService:
         for item in self.database().list_datasets():
             metadata = item["metadata"]
             filename = item.get("filename") or "上传数据"
+            origin = metadata.get("import_origin")
             output.append(DemoScenario(
                 dataset_id=item["dataset_id"],
                 name=str(metadata.get("dataset_name") or Path(filename).stem),
                 description=(
-                    "AdventureWorks 订单及模拟多业务扩展"
-                    if metadata.get("import_origin") == "adventureworks"
+                    "demo-all 与 AdventureWorks 统一订单及广告、退款、物流演示推算数据"
+                    if origin == "unified"
+                    else
+                    "AdventureWorks 示例订单及广告、退款、物流演示推算数据"
+                    if origin == "adventureworks"
                     else "由 {} 导入的正式数据集".format(filename)
                 ),
                 filters={},
-                source_type="AdventureWorks + 模拟扩展" if metadata.get("import_origin") == "adventureworks" else "Web 上传",
-                is_demo=False,
+                source_type=(
+                    "demo-all + AdventureWorks + 演示推算数据"
+                    if origin == "unified"
+                    else "AdventureWorks 示例订单 + 演示推算数据"
+                    if origin == "adventureworks"
+                    else "Web 上传"
+                ),
+                is_demo=origin in {"adventureworks", "unified"},
                 created_at=item["created_at"],
                 metadata=metadata,
             ))
@@ -117,8 +127,10 @@ class DatasetService:
 
     def archive_dataset(self, dataset_id: str) -> bool:
         scenario = self.scenario(dataset_id)
-        if scenario.is_demo:
+        if any(item.dataset_id == dataset_id for item in SCENARIOS):
             raise PermissionError("演示数据集不能归档")
+        if (scenario.metadata or {}).get("import_origin") == "unified":
+            raise PermissionError("当前统一数据集不能从普通入口归档")
         archived = self.database().archive_dataset(dataset_id)
         if archived:
             self.clear_analysis_cache()
@@ -156,6 +168,7 @@ class DatasetService:
         amount_semantic: str,
         source_currency: str | None,
         target_currency: str,
+        target_dataset_id: str | None = None,
     ) -> dict[str, Any]:
         return import_uploaded_datasets(
             self,
@@ -166,6 +179,7 @@ class DatasetService:
             amount_semantic=amount_semantic,
             source_currency=source_currency,
             target_currency=target_currency,
+            target_dataset_id=target_dataset_id,
         )
 
 

@@ -1,6 +1,7 @@
 """Cross-border business capability and data improvement assessment."""
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import pandas as pd
@@ -211,7 +212,16 @@ def build_improvement_plan(context, capabilities: Sequence[AnalysisCapability]) 
 
 
 def assess_business_quality(context, dataset_id: str, scope_id: str):
-    generic = assess_data_quality(context)
+    quality_context = context
+    if (
+        context.metadata.get("data_grain") in {"order_item", "canonical_order_line"}
+        and "record_id" in context.analysis_data
+    ):
+        quality_context = replace(
+            context,
+            contract=replace(context.contract, grain_key="record_id"),
+        )
+    generic = assess_data_quality(quality_context)
     summary = DataQualitySummary(
         dataset_id=dataset_id,
         scope_id=scope_id,
@@ -239,8 +249,8 @@ def assess_business_quality(context, dataset_id: str, scope_id: str):
             item.completeness_rate, item.validity_rate, item.uniqueness_rate,
             item.status, impact if item.present else "{}不可用".format(impact),
         ))
-    capabilities = build_capability_map(context)
-    improvements = build_improvement_plan(context, capabilities)
+    capabilities = build_capability_map(quality_context)
+    improvements = build_improvement_plan(quality_context, capabilities)
     unsupported = [
         {"capability_id": item.capability_id, "name": item.name, "conclusion": conclusion, "reasons": list(item.reasons)}
         for item in capabilities for conclusion in item.unsupported_conclusions

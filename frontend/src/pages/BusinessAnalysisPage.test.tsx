@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BusinessAnalysisPage } from "./BusinessAnalysisPage";
+import { AppStateProvider } from "../state/app";
 
 vi.mock("../components/EChart", () => ({
   EChart: () => <div data-testid="business-chart">chart</div>,
@@ -31,6 +32,10 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("BusinessAnalysisPage", () => {
   it("keeps simulation provenance visible and renders metrics, anomalies, causes and actions", async () => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: { getItem: () => "adventureworks-test", setItem: vi.fn(), removeItem: vi.fn() },
+    });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       const data = url.includes("/business/datasets")
@@ -39,14 +44,52 @@ describe("BusinessAnalysisPage", () => {
       return { ok: true, json: async () => ({ status: "SUCCESS", data, meta: {}, limitations: [] }) } as Response;
     }));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/business/advertising"]}><Routes><Route path="/business/:topic" element={<BusinessAnalysisPage />} /></Routes></MemoryRouter></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><AppStateProvider><MemoryRouter initialEntries={["/business/advertising"]}><Routes><Route path="/business/:topic" element={<BusinessAnalysisPage />} /></Routes></MemoryRouter></AppStateProvider></QueryClientProvider>);
 
-    expect(await screen.findAllByText("模拟数据")).not.toHaveLength(0);
-    expect(await screen.findByText("广告花费")).toBeInTheDocument();
+    expect(await screen.findAllByText("演示推算数据")).not.toHaveLength(0);
+    expect(await screen.findAllByText("广告花费")).not.toHaveLength(0);
     expect(screen.getByText("花费上升但转化效率下降")).toBeInTheDocument();
     expect(screen.getByText("原因说明")).toBeInTheDocument();
     expect(screen.getByText("行动建议")).toBeInTheDocument();
     expect(screen.getByTestId("business-chart")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("synthetic_extension");
+    expect(document.body).not.toHaveTextContent("scope_test");
+    expect(document.body).not.toHaveTextContent("AD_SPEND_UP_CVR_DOWN");
+    expect(document.body).not.toHaveTextContent("spend_change >= 50%");
+    expect(document.body).not.toHaveTextContent("sum(spend_usd)");
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows the available period and does not mount a chart when the selected range is out of range", async () => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: { getItem: () => "adventureworks-test", setItem: vi.fn(), removeItem: vi.fn() },
+    });
+    const outOfRange = {
+      ...payload,
+      data_state: "OUT_OF_RANGE",
+      period: { start: "2030-01-01", end: "2030-12-31" },
+      available_periods: [{ start: "2013-01-01", end: "2014-01-28" }],
+      recommended_period: { start: "2013-02-01", end: "2014-01-28" },
+      metrics: payload.metrics.map(item => ({ ...item, value: null })),
+      trend: { ...payload.trend, rows: [] },
+      ranking: { ...payload.ranking, rows: [] },
+      anomalies: [], causes: [], actions: [], evidence: [], details: [],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const data = String(input).includes("/business/datasets")
+        ? [{ dataset_id: "adventureworks-test", name: "AdventureWorks 多业务分析", imported_at: "2026-07-28", is_simulated: true, source_label: "模拟数据" }]
+        : outOfRange;
+      return { ok: true, json: async () => ({ status: "SUCCESS", data, meta: {}, limitations: [] }) } as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><AppStateProvider><MemoryRouter initialEntries={["/business/advertising?start=2030-01-01&end=2030-12-31"]}><Routes><Route path="/business/:topic" element={<BusinessAnalysisPage />} /></Routes></MemoryRouter></AppStateProvider></QueryClientProvider>);
+
+    expect(await screen.findByText("当前选择时期没有该专题事实")).toBeInTheDocument();
+    expect(screen.getByText(/2013-01-01 至 2014-01-28/)).toBeInTheDocument();
+    expect(screen.queryByTestId("business-chart")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "使用可用时期" }));
+    await waitFor(() => expect(fetchMock.mock.calls.some(([input]) => String(input).includes("start=2013-02-01") && String(input).includes("end=2014-01-28"))).toBe(true));
   });
 });

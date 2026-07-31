@@ -12,7 +12,6 @@ from autoclean.analytics import LoadedDataset, ValidationIssue, load_tabular, pr
 from autoclean.analytics.io import FatalError
 
 from crossborder_analytics.contract import ECOMMERCE_CONTRACT, ECOMMERCE_IMPORT_CONTRACT, domain_issues
-from crossborder_analytics.multibusiness_import import classify_business_file, preview_business_payload
 
 
 REQUIRED_FIELDS = {"order_id", "order_date", "total_amount"}
@@ -211,23 +210,8 @@ def _capabilities(context) -> list[dict[str, Any]]:
 
 
 def build_import_preview(files: list[UploadedFilePayload]) -> dict[str, Any]:
-    classifications = [classify_business_file(file.filename, file.content) for file in files]
-    if any(item["file_type"] != "unknown" for item in classifications):
-        previews = [preview_business_payload(file.filename, file.content) for file in files]
-        fatal = any(issue["severity"] == "FATAL" for item in previews for issue in item["issues"])
-        return _clean({
-            "status": "BLOCKED" if fatal else "READY_FOR_MAPPING_CONFIRMATION",
-            "file_count": len(previews),
-            "total_rows": sum(int(item.get("row_count") or 0) for item in previews),
-            "files": previews,
-            "batch_issues": [{
-                "severity": "WARNING",
-                "code": "ASSOCIATION_VALIDATED_ON_COMMIT",
-                "message": "上传文件的关联成功率将在与目标 AdventureWorks 订单数据集绑定后再次验证",
-            }],
-            "is_simulated": any(item.get("is_simulated") for item in previews),
-            "next_step": "确认文件类型、字段、粒度和模拟数据标识后绑定订单数据集",
-        })
+    # The Data Hub upload contract is always the autoclean ecommerce contract.
+    # Multi-business directory imports remain an explicit separate workflow.
     previews: list[dict[str, Any]] = []
     contexts = []
     for file in files:
@@ -237,16 +221,22 @@ def build_import_preview(files: list[UploadedFilePayload]) -> dict[str, Any]:
             contexts.append((preview, context))
 
     batch_issues = _batch_issues(previews, contexts)
-    fatal = any(issue["severity"].upper() == "FATAL" for preview in previews for issue in preview["issues"])
-    fatal = fatal or any(issue["severity"].upper() == "FATAL" for issue in batch_issues)
-    status = "BLOCKED" if fatal else "READY_FOR_MAPPING_CONFIRMATION"
+    ready_files = [preview for preview in previews if preview["status"] == "READY_FOR_CONFIRMATION"]
+    status = "READY_FOR_MAPPING_CONFIRMATION" if ready_files else "BLOCKED"
+    has_failed_files = len(ready_files) < len(previews)
     return _clean({
         "status": status,
         "file_count": len(previews),
         "total_rows": sum(int(item["metadata"].get("rows") or 0) for item in previews),
         "files": previews,
         "batch_issues": batch_issues,
-        "next_step": "修复阻断问题后重新上传" if fatal else "确认字段映射、数据粒度、金额语义和币种后可入库",
+        "next_step": (
+            "确认后仅合格文件入库，失败文件保留失败原因"
+            if has_failed_files and ready_files else
+            "修复阻断问题后重新上传"
+            if not ready_files else
+            "确认字段映射、数据粒度、金额语义和币种后可入库"
+        ),
     })
 
 
@@ -254,25 +244,6 @@ def _batch_issues(previews: list[dict[str, Any]], contexts: list[tuple[dict[str,
     issues: list[ValidationIssue] = []
     if len(previews) <= 1:
         return []
-
-    column_sets = {item["filename"]: set(item["columns"]) for item in previews if item["columns"]}
-    if column_sets:
-        first_name, first_columns = next(iter(column_sets.items()))
-        for filename, columns in list(column_sets.items())[1:]:
-            missing = sorted(first_columns - columns)
-            extra = sorted(columns - first_columns)
-            if missing or extra:
-                issues.append(ValidationIssue(
-                    "FATAL",
-                    "FIELD_SET_MISMATCH",
-                    "文件字段不一致，无法按同一映射合并导入",
-                    details={
-                        "baseline_file": first_name,
-                        "filename": filename,
-                        "missing_columns": missing,
-                        "extra_columns": extra,
-                    },
-                ))
 
     hashes: dict[str, list[str]] = {}
     for item in previews:

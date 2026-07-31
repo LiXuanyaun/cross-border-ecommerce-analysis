@@ -13,12 +13,17 @@ def amount_column(frame: pd.DataFrame, field: str = "total_amount") -> str:
 
 
 def resolve_market_field(frame: pd.DataFrame) -> Optional[str]:
-    """Choose one geographic grain for the whole dataset."""
-    if "country" in frame and frame["country"].astype("string").str.strip().replace("", pd.NA).notna().any():
-        return "country"
-    if "region" in frame and frame["region"].astype("string").str.strip().replace("", pd.NA).notna().any():
-        return "region"
-    return None
+    """Choose the geographic field with the best coverage in the active frame."""
+    coverage = {}
+    for field in ("country", "region"):
+        if field in frame:
+            values = frame[field].astype("string").str.strip().replace("", pd.NA)
+            coverage[field] = int(values.notna().sum())
+    available = {field: count for field, count in coverage.items() if count > 0}
+    if not available:
+        return None
+    # Prefer country only when its coverage is at least as good as region.
+    return max(available, key=lambda field: (available[field], field == "country"))
 
 
 def market_series(frame: pd.DataFrame) -> pd.Series:

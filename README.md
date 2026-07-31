@@ -1,207 +1,248 @@
-# CrossBorder AI Analytics 4.0.0
+<p align="center">
+  <img src="./frontend/public/crossborder-logo.png" alt="CrossBorder AI Analytics" width="260" />
+</p>
 
-面向跨境电商运营复盘的证据型经营分析平台。项目以 AutoClean 6.6 为非破坏性数据与质量底座，将规范化订单和版本化分析对象写入 SQLite，再由注册指标、异常规则、诊断、建议和受控 SQL 证据生成 Dashboard、Excel、Markdown、DOCX 和可审计 manifest。
+<p align="center">
+  <strong>面向跨境电商的证据型经营分析平台</strong>
+</p>
 
-4.0 在既有订单分析之上增加 AdventureWorks 订单适配器，以及独立的广告、退款和物流事实模型。React + FastAPI 是主产品界面；原 Streamlit `app.py` 继续保留为旧版兼容和内部口径对照界面。
+<p align="center">
+  从订单、市场到广告、退货与物流，让每一个经营结论都能追溯到数据、口径和证据。
+</p>
 
-## 核心约束
+<p align="center">
+  <a href="docs/ARCHITECTURE.md">架构说明</a> ·
+  <a href="docs/IMPORT_GUIDE.md">导入指南</a> ·
+  <a href="docs/SQLITE_DATA_LAYER.md">SQLite 数据层</a> ·
+  <a href="docs/MULTI_BUSINESS_DATA_DICTIONARY.md">多业务数据字典</a>
+</p>
 
-- 原始文件只读，不填充、截断、删除或覆盖订单。
-- `profit_margin` 在当前样例中映射为单笔利润额 `profit_amount`；利润率由利润额除以 GMV 派生。
+<p align="center">
+  <img src="https://img.shields.io/badge/version-4.0.0-1769ff" alt="version 4.0.0" />
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776ab" alt="Python 3.10+" />
+  <img src="https://img.shields.io/badge/frontend-React%2018-149eca" alt="React 18" />
+  <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/storage-SQLite-003b57" alt="SQLite" />
+</p>
+
+> CrossBorder AI Analytics 不只是把数据画成图表，而是把“数据准备 → 指标计算 → 异常识别 → 经营诊断 → 建议与行动 → 报告复盘”连成一条可复算、可审计的分析链路。
+
+## 为什么做它？
+
+跨境电商经营分析经常卡在三个地方：原始文件口径不一致，报表数字无法复核；缺字段或缺周期时，系统仍然给出看似确定的结论；AI 能够生成文字，却不能证明这些文字来自哪一份数据、哪个时期和哪套指标。
+
+本项目把数据身份、分析范围、指标定义、质量状态和证据链视为正式契约。无论是 Dashboard、报告、任务还是 AI 分析师，都使用同一份版本化数据和同一套注册指标。
+
+## 核心亮点
+
+| 能力 | 解决的问题 | 项目实现 |
+| --- | --- | --- |
+| **证据优先** | 结论无法解释，建议无法复盘 | `MetricSnapshot → Anomaly → Diagnosis → Recommendation → Evidence → Action`，每一步都可回溯 |
+| **数据质量即产品能力** | 缺字段、样本不足和不完整月份被误判为经营问题 | 按数据集能力返回 `READY`、`PARTIAL`、`INSUFFICIENT_DATA`、`EMPTY` 等明确状态，并生成补数路线 |
+| **统一数据集身份** | 总览、专题、报告和 Agent 使用了不同范围 | `dataset_id`、`scope_id`、周期、币种和质量状态贯穿所有页面与输出 |
+| **不破坏原始数据** | 导入和清洗覆盖源文件，历史报表漂移 | 原始文件只读；规范化结果写入版本化 SQLite；追加数据生成只读子版本 |
+| **多业务事实模型** | 把广告、退货、物流事件误当成订单行 | 订单、广告、退货、物流保持各自业务粒度，通过统一 `dataset_id` 协同分析 |
+| **受控 AI 分析** | AI 混用数据、编造数字或绕过权限 | Agent 只能调用注册工具和参数化查询，带着明确范围、证据和降级状态运行 |
+
+## 能分析什么？
+
+### 经营总览
+
+从一张总览看清 GMV、订单数、客单价、利润、市场表现、商品表现和增长机会；系统会自动识别最新可比较的完整周期，不用固定日期掩盖数据范围问题。
+
+### 订单专题
+
+五个可独立筛选、查看明细和导出的分析主题：
+
+- **市场**：国家优先、区域回退，查看规模、贡献、增长和市场策略。
+- **商品**：商品结构、销售排行、贡献、利润质量和商品详情。
+- **客户**：客户规模、构成、RFM 分群和高价值客户线索。
+- **利润**：利润额、利润率、贡献结构和高销售低利润对象。
+- **退货**：退货关联 GMV、退货风险与相关商品/市场暴露。
+
+### 多业务专题
+
+当数据集中包含扩展事实时，进入同一数据身份下的三个业务视图：
+
+| 专题 | 关注内容 | 当前数据边界 |
+| --- | --- | --- |
+| 广告 | 花费、曝光、点击、转化、ROAS、Campaign 表现 | 归因收入与花费需满足 USD 口径；AdventureWorks 扩展目前为模拟数据 |
+| 退货 | 退货数量、原因、商品与市场暴露 | 退货关联 GMV 不等同于真实退款额或利润损失 |
+| 物流 | 发货、承运商、时效、追踪事件和履约异常 | 物流事件保持独立粒度，不回写订单事实 |
+
+## 一条可审计的数据链
+
+```mermaid
+flowchart LR
+  A["CSV / XLSX / AdventureWorksDW"] --> B["预检与字段语义确认"]
+  B --> C["版本化统一数据集"]
+  C --> D["SQLite + 注册指标 + 受控 SQL"]
+  D --> E["指标快照与数据质量"]
+  E --> F["异常与经营诊断"]
+  F --> G["建议、行动与证据"]
+  G --> H["Dashboard / 报告 / Agent"]
+```
+
+核心约束：
+
+- 原始文件只读，任何转换都生成规范化视图或新版本。
+- 相同来源重复导入保持幂等；不同 `dataset_id` 不会混算。
 - 不完整月份只展示，不参与月环比结论。
-- 缺字段、样本不足或汇率不完整时模块显式降级，不编造结果。
-- 退货金额称为“退货关联GMV”，没有退款额和成本时不声称真实损失。
-- SQLite 只保存规范化分析视图；相同数据重复导入保持幂等，不同 `dataset_id` 绝不混算。
-- 市场维度整份数据统一选择：有有效 `country` 时使用国家，否则回退 `region`；国家缺失值显示“未标注国家”。
-- 页面内商品分类、客户分群和热力图模式只改变构成预览、详情与行动清单，不改变固定分析模型和完整报告。
-- 市场增长和产品机会按最新两个完整可比较周期确定性分类；跨两期合计少于 3 单的商品只计入样本不足汇总，不生成机会或行动项。
-- 摘要版和完整版《跨境电商经营分析与行动报告》使用相同指标、机会、行动和证据；报告范围只改变关注对象。
-- AdventureWorks 原始订单与广告、退款、物流模拟扩展严格区分；页面、API 和报告持续显示“模拟数据”，不得将扩展结论表述为真实经营表现。
-- 广告、退款和物流保存在独立事实表；ROAS 只使用 USD 花费和归因收入，退款金额不等同于退货关联 GMV。
+- 缺字段、汇率不完整、样本不足或证据不够时，结果会显式降级。
+- “贡献”或“相关”不会被包装成已经证明的因果关系。
+- SQL 是正式事实层，所有查询使用受控、参数化的命名 SQL；不提供任意 SQL 控制台。
 
-## 安装
+## 快速开始
+
+### 环境要求
+
+- Python 3.10+
+- Node.js 20+
+- Git（安装 AutoClean 6.6 的固定 Tag 时使用）
+
+### 安装并启动
 
 ```powershell
-cd D:\projects\cross-border-ecommerce-analysis
+git clone https://github.com/LiXuanyaun/cross-border-ecommerce-analysis.git
+cd cross-border-ecommerce-analysis
+
 python -m pip install -r requirements.txt
+.\start.cmd
 ```
 
-安装过程会从 GitHub 的固定 `v6.6.0` Tag 获取 AutoClean，并以 editable 模式安装本项目。需要本机已安装 Git 且能够访问 GitHub，不再要求相邻目录中存在 AutoClean 仓库。
+启动脚本会自动安装前端依赖、构建 React 应用、准备统一数据集，并在 `http://127.0.0.1:8000` 启动产品。默认的 `start.cmd` 使用 `private` 模式。
 
-## 启动 Dashboard
-
-### React + FastAPI（推荐）
+首次只想查看演示数据，也可以使用：
 
 ```powershell
-cd D:\projects\cross-border-ecommerce-analysis
-python -m pip install -r requirements.txt
-cd frontend
-npm install
-npm run build
-cd ..
-powershell -ExecutionPolicy Bypass -File .\scripts\start_web.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\start_web.ps1 `
+  -Mode demo -Build -OpenBrowser
 ```
 
-访问 `http://127.0.0.1:8000`。默认使用 `demo` 模式：样例数据可筛选、分析和生成临时报告，但不能上传文件或修改共享任务。
+演示模式允许浏览和分析样例数据，但不允许上传文件或修改共享任务。私有模式会在本地保存任务、Agent 会话和工具事件；CC Switch 的 API Key 只进入后端进程内存，不返回浏览器，也不写入项目数据库和日志。没有 CC Switch 时，可参考 `.env.example` 配置 OpenAI 兼容模型。
 
-FastAPI 的 OpenAPI Schema 位于 `/openapi.json`。后端关键响应已经挂载基础 response model；后端契约调整后，在服务运行期间执行 `cd frontend; npm run generate:api` 可刷新 `src/generated/api.ts`，业务组件继续通过页面级 DTO 封装使用这些接口。
-
-本地私有模式允许从 AI 分析师页面一键读取当前 CC Switch Codex provider：
+### Docker
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_web.ps1 -Mode private
+docker build -t crossborder-ai .
+docker run --rm -p 8000:8000 crossborder-ai
 ```
 
-CC Switch 的 API Key 只进入后端进程内存，不返回浏览器、不写入项目数据库和日志。私有模式的任务状态、Agent 会话、消息、运行和工具事件保存在 `database/crossborder_state.db`；演示模式会话只存在内存中并按 `CROSSBORDER_DEMO_SESSION_TTL` 清理。没有 CC Switch 的部署环境可参考 `.env.example` 配置 OpenAI 兼容模型。
+## 数据导入
 
-### Streamlit 旧版兼容界面
+### 普通订单数据
 
-```powershell
-streamlit run app.py
-```
+支持 CSV/XLSX 预览、字段映射、金额语义确认、币种转换、质量检查和版本化导入。最小可用字段为：
 
-默认载入 `data/ecommerce_sales_34500.csv`。该界面用于历史兼容、内部调试和口径对照；新交互、新验收和用户试点以 React + FastAPI 为准。侧栏顶部是明确的页面导航；全局只保留影响全部页面的分析周期。上传 CSV/XLSX、字段映射、源币种、基准币种和历史汇率统一收在“数据与口径”区域，区域和品类不作为全局筛选器。
+- 订单 ID
+- 订单日期
+- 订单金额
 
-“区域市场”页面提供动态的市场×品类热力图，可在订单偏好和收益贡献之间切换；市场策略矩阵公开规模、利润、退货和履约基准。“商品分析”提供完整分页清单、动态分类、搜索/列筛选、同页商品详情及当前预览下载。“客户分析”的 RFM（客户价值模型）保持固定，分群选择只联动市场/品类构成和客户清单。
+补充国家/区域、商品、客户、利润、数量和退货字段后，系统会解锁更多分析能力。导入流程会先生成预览，确认无 `FATAL` 问题后才在一个 SQLite 事务中提交；非法数据不会留下半成品。
 
-“市场增长”页面按 GMV（成交总额）增长、订单、客单价、利润率、退货率、SKU 集中度、样本和质量区分健康增长、风险增长、稳定、收缩、低价值、样本不足与数据不足；“产品机会”页面在原有经营分类之外识别扩量、扩市场、客户渗透、组合销售、利润修复、高风险增长和观察机会。两页均支持固定矩阵、局部筛选、详情和当前清单下载。
+### AdventureWorks 多业务数据
 
-“导出”页面可选择摘要版或完整版、整体或指定市场/品类范围、是否附带行动明细，以及 DOCX/Excel 格式。Web 报告接口继承当前日期、市场和品类筛选，并使用同一 `scope_id` 重新生成报告；Excel 同时保留完整指标与证据审计表。
+将 AdventureWorksDW 文件放入本地只读目录，再通过数据中心导入。系统会识别文件类型、字段、业务粒度、关联率和模拟数据标识：
 
-Phase 2 新增三个工作区：“风险中心”按 P0-P3 管理异常，“洞察中心”把指标变化、驱动贡献、行动边界和证据串在同一审计轨道，“数据健康中心”展示 A-D 可信度、字段健康、分析能力和补数路线。任务状态固定为 `TODO`、`IN_PROGRESS`、`COMPLETED`、`REVIEWED`、`CLOSED`，并记录负责人、截止日期、处理结果、复盘结论和关闭信息。所有工作区、CLI 和报告读取同一批持久化对象。
+- 订单适配为标准订单事实，保留 `SalesOrderNumber` 与 `SalesOrderLineNumber`。
+- 广告、退货、物流写入独立事实表，不改变既有 `orders` 粒度。
+- 文件哈希、导入批次、自然业务键和外键用于血缘、幂等和关联校验。
+- 追加到已有 Web 数据集会创建带 `parent_dataset_id` 的新版本，父版本保持只读。
 
-Dashboard 所有 Plotly 图表使用同一套响应式布局：时间轴按周期数量调整角度和刻度密度，中文分类标签自动换行，水平图和热力图按内容增加高度，标题、图例、坐标轴及色条启用自动边距。报告中的 Matplotlib 图片使用相同中文字体回退和安全画布边距。
+完整字段和校验规则见 [导入指南](docs/IMPORT_GUIDE.md)。
 
-规范化数据默认保存在 `database/ecommerce.db`。数据库、WAL 和临时文件不会进入 Git；当前数据集编号、入库记录数和数据库版本可在“数据准备”视图查看。
+## AI 分析师
 
-表结构、版本隔离、事务边界和命名查询目录见 [SQLite 数据层说明](docs/SQLITE_DATA_LAYER.md)。架构边界、导入流程和维护操作见 [Architecture](docs/ARCHITECTURE.md)、[Import Guide](docs/IMPORT_GUIDE.md) 和 [Maintenance Guide](docs/MAINTENANCE.md)。
+AI 分析师建立在确定性的分析事实之上，而不是替代指标层：
 
-## 命令行导出
+- 通过注册工具读取指标、异常、诊断、建议、证据和报告。
+- 每次会话绑定明确的 `dataset_id`、`scope_id` 和分析范围。
+- 支持计划、流式工具事件（SSE）和可查看的分析过程。
+- Provider 不可用、输出为空或数字无法通过证据校验时，自动转为透明的确定性降级。
+- Agent 不开放任意 SQL，不接触浏览器端 API Key。
 
-```powershell
-python -m crossborder_analytics.cli data/ecommerce_sales_34500.csv `
-  --source-currency CNY `
-  --target-currency CNY `
-  --database database/ecommerce.db `
-  -o outputs/latest
-```
+## 输出与复盘
 
-需要对照旧版 pandas 聚合时，可显式传入 `--backend pandas`。Dashboard 和 CLI 不会在数据库失败后静默回退。
-
-多币种数据默认从 Frankfurter/ECB 读取历史日汇率并缓存。也可上传或通过 CLI 传入汇率表：
-
-```csv
-date,source_currency,target_currency,rate
-2025-01-03,USD,CNY,7.2
-```
-
-周末和节假日最多回溯 7 天。跨币种金额合计要求 100% 汇率覆盖。
-
-## AdventureWorks 多业务导入
-
-将无表头、`|` 分隔的 AdventureWorksDW 文件放在本地只读目录，并将生成的广告、退款、物流 CSV 与场景 manifest 放在同一扩展目录。导入预览会返回文件类型、字段、粒度、关联成功率、错误/警告和模拟数据标识；相同文件哈希与业务唯一键重导入不会增加记录数。
-
-订单适配器保留 `SalesOrderNumber` 和 `SalesOrderLineNumber`，关联产品、品类、客户、地区、币种和汇率维表，再写入既有标准订单模型。扩展数据写入 `dim_campaign`、`dim_carrier`、`dim_return_reason`、`fact_ad_performance_daily`、`bridge_order_attribution`、`fact_returns`、`fact_shipments` 和 `fact_tracking_events`，不改变既有 `orders` 粒度。
-
-专题 API 为 `GET /api/v1/business/{advertising|returns|logistics}?dataset_id=...`。三个页面位于“专题分析”的广告、退款、物流子路由，支持筛选、KPI、趋势、排名、异常、证据和行动建议。
-
-## 输出
+同一套指标、规则版本和证据编号可以导出为：
 
 - `analysis_result.xlsx`
 - `cross_border_analysis_report.md`
 - `cross_border_analysis_report.docx`
 - `analysis_manifest.json`
 
-Excel 在原有业务 Sheet 之外增加 `metric_definitions`、`metric_snapshots`、`anomalies`、`diagnoses`、`recommendations`、`evidence`、`data_quality_summary`、`data_quality_dimensions`、`field_quality`、`analysis_capability`、`data_improvement_plan` 和 `data_quality_issues`。
+Excel 除业务明细外，还包含指标定义、指标快照、异常、诊断、建议、证据、数据质量、分析能力和数据改进计划。多业务数据集会额外输出广告、退货、物流和多业务证据工作表。
 
-多业务数据集还会写入 `广告分析`、`退款分析`、`物流分析` 和 `多业务证据` 工作表；DOCX、Markdown 与 `analysis_manifest.json` 使用完全相同的注册指标、规则版本和证据编号。
+报告、Dashboard、任务和 Agent 共享同一 `scope_id`，因此可以从一个行动回到对应的指标、时期、数据质量和证据。
 
-## 测试
+## 技术架构
+
+```text
+React + TypeScript
+        |
+FastAPI /api/v1
+        |
+Routes -> Services -> Presenters
+        |
+AnalysisService + Registered Metrics + Named SQL
+        |
+Versioned SQLite + ArtifactStore
+        |
+MetricSnapshot -> Anomaly -> Diagnosis -> Recommendation -> Evidence
+        |
+Dashboard / Reports / Work Items / Controlled Agent
+```
+
+技术栈：Python、AutoClean 6.6、pandas、SQLite、FastAPI、React 18、TypeScript、TanStack Query、ECharts、TailwindCSS、pytest、Vitest、Playwright 和 Docker。
+
+主产品只有 React + FastAPI 一条链路。后端路由负责协议，服务和 Presenter 负责应用编排，`crossborder_analytics` 负责分析、存储和报告；前端只消费后端契约，不在组件内重新推断业务结论。
+
+## 测试与开发
 
 ```powershell
+# 后端
 python -m pytest
+
+# 前端
 cd frontend
+npm install
 npm test
 npm run build
 ```
 
-测试覆盖样例指标基线、部分月份、缺少可选字段、重复订单、历史汇率、RFM、国家优先/区域回退、市场品类占比、策略规则、商品品类冲突、商品详情和四类导出。
-
-SQL 数据层另外覆盖版本幂等、筛选参数、失败回滚、查询日志，以及市场品类、客户构成和商品详情的 pandas 结果对账。运行 10 万行本地基准（包含市场热力查询和商品详情查询）：
+SQLite 数据层和 100,000 行本地基准：
 
 ```powershell
 python .\scripts\benchmark_sqlite.py
 ```
 
-GitHub Actions 工作流位于 `.github/workflows/v31-ci.yml`，覆盖 Python 回归、前端测试、前端构建、100,000 行性能门禁和 Docker health smoke test。
+常用开发入口：
 
-### 浏览器自动化验收
-
-项目使用本机已安装的 Chrome 和 Edge，不下载额外浏览器。启动两个隔离的调试窗口：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start_debug_browsers.ps1
-```
-
-Chrome 仅在 `127.0.0.1:9222` 提供调试接口，Edge 使用 `127.0.0.1:9223`。自动化资料保存在 `.cache/browser-debug`，不会读取日常浏览器资料。
-
-检查连接和页面结构：
-
-```powershell
-python .\scripts\browser_control.py --browser all status
-python .\scripts\browser_control.py --browser chrome snapshot --url http://localhost:8501
-python .\scripts\browser_control.py --browser edge screenshot --output .cache\browser-debug\screenshots\edge.png
-```
-
-运行 Chrome 与 Edge 的侧栏折叠、窄屏布局和截图验收：
-
-```powershell
-$env:BROWSER_E2E='1'
-python -m pytest tests\test_sidebar_browser.py
-```
-
-## Web 架构
-
-```text
-React SPA
-  -> FastAPI /api/v1
-  -> route modules（datasets/imports/analytics/agent/reports/maintenance）
-  -> AnalyticsRuntime（兼容入口与组合转发）
-  -> Application Services + Presenters
-  -> AnalysisService / AnalysisRequest（单一分析入口）
-  -> SQLite + 受控 SQL + ArtifactStore
-  -> MetricSnapshot -> Anomaly -> Diagnosis -> Recommendation -> Insight / Opportunity / ActionItem
-  -> Report Runtime / Task Lifecycle / Agent Context
-```
-
-一级导航固定为经营总览、专题分析、数据中心和 AI 分析师。Agent 只能调用注册的指标、异常、诊断、建议、证据和报告工具，不开放任意 SQL。
-
-单容器部署：
-
-```powershell
-docker build -t crossborder-ai .
-docker run --rm -p 8000:8000 crossborder-ai
-
-# 私有模式使用命名卷持久化任务与 Agent 状态
-docker run --rm -p 8000:8000 `
-  -e CROSSBORDER_APP_MODE=private `
-  -v crossborder-state:/app/state `
-  crossborder-ai
-```
+- OpenAPI Schema：`http://127.0.0.1:8000/openapi.json`
+- 健康检查：`GET /api/v1/health`
+- 导入预览：`POST /api/v1/imports/preview`
+- 订单专题：`GET /api/v1/topics/{topic}`
+- 多业务专题：`GET /api/v1/business/{advertising|returns|logistics}`
 
 ## 当前边界
 
-当前只开放预定义、参数化 SQL，不提供任意 SQL 控制台。公开演示模式不调用真实模型；真实 Agent 首先作为本地私有能力交付，输出状态覆盖 `SUCCESS`、`PARTIAL`、`SKIPPED`、`FAILED`、`FATAL`。多租户权限、趋势预测、多店铺/API 实时接入不在本期范围。
+这是一个本地单用户、试点级商业 MVP，当前有意保持边界清晰：
 
-## 项目复盘与路线图
+- 不提供多租户权限、多店铺实时 API 接入和趋势预测。
+- 公开演示模式不调用真实模型；真实 Agent 能力优先在本地私有模式交付。
+- AdventureWorks 的广告、退货和物流扩展是模拟数据，页面、报告和 Agent 都会持续披露这一点。
+- 没有退款额、成本或其他必要字段时，不把退货关联 GMV 表述为真实损失。
+- 不完整周期、缺失字段和低样本不会被静默补齐，也不会生成虚假的机会或行动项。
 
-今日交付总结、可复用工程经验、当前缺点和 P0-P3 优化计划见：
+## 项目文档
 
-- [项目架构说明](docs/ARCHITECTURE.md)
-- [数据模型路线图](docs/DATA_MODEL_ROADMAP.md)
-- [导入指南](docs/IMPORT_GUIDE.md)
-- [维护指南](docs/MAINTENANCE.md)
-- [多业务数据字典](docs/MULTI_BUSINESS_DATA_DICTIONARY.md)
-- [多业务指标与异常规则](docs/MULTI_BUSINESS_METRICS_AND_RULES.md)
-- [阶段总结与工程化路线图](docs/PROJECT_REVIEW_2026-07-16.md)
-- [今日总结、反思与优化](docs/DAILY_RETROSPECTIVE_2026-07-16.md)
+- [架构说明](docs/ARCHITECTURE.md)：模块边界、数据流和工程约束
+- [导入指南](docs/IMPORT_GUIDE.md)：普通订单和 AdventureWorks 导入流程
+- [SQLite 数据层](docs/SQLITE_DATA_LAYER.md)：版本、事务、命名 SQL 和查询边界
+- [多业务数据字典](docs/MULTI_BUSINESS_DATA_DICTIONARY.md)：广告、退货、物流事实模型
+- [多业务指标与异常规则](docs/MULTI_BUSINESS_METRICS_AND_RULES.md)：指标口径、异常和证据要求
+- [维护指南](docs/MAINTENANCE.md)：数据库、缓存和统一数据集维护
+- [项目上下文](docs/PROJECT_CONTEXT.md)：产品目标、重要决策和当前状态
+
+<p align="center">
+  <sub>CrossBorder AI Analytics · 用证据把数据变成下一步行动</sub>
+</p>

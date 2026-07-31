@@ -7,6 +7,7 @@ from typing import Any
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import tomllib
 import uuid
@@ -245,8 +246,16 @@ class AgentManager:
                 ).format(question, json.dumps(model_context, ensure_ascii=False)[:30000])
                 try:
                     generated = await self.provider.synthesize(prompt)
-                    if generated:
-                        answer = generated
+                    if generated and generated.strip():
+                        validation_error = self._model_answer_error(generated, model_context)
+                        if validation_error:
+                            run_status = "PARTIAL"
+                            self._emit(run_id, "warning", {"message": f"模型输出校验失败，已返回确定性分析：{validation_error}"})
+                        else:
+                            answer = generated.strip()
+                    else:
+                        run_status = "PARTIAL"
+                        self._emit(run_id, "warning", {"message": "模型输出为空，已返回确定性分析"})
                 except Exception as exc:
                     run_status = "PARTIAL"
                     self._emit(run_id, "warning", {"message": f"模型调用失败，已返回确定性分析：{type(exc).__name__}"})
@@ -291,6 +300,22 @@ class AgentManager:
                 break
         action_text = "\n".join(actions[:5]) or "当前证据不足，无法生成可执行建议。"
         return f"关键发现：\n{findings}\n\n建议动作：\n{action_text}"
+
+    @staticmethod
+    def _model_answer_error(answer: str, context: dict[str, Any]) -> str | None:
+        text = answer.strip()
+        if not text:
+            return "输出为空"
+        controlled = json.dumps(context, ensure_ascii=False, default=str)
+        allowed_numbers = set(re.findall(r"-?\d+(?:\.\d+)?", controlled))
+        answer_numbers = re.findall(r"-?\d+(?:\.\d+)?", text)
+        unsupported = [
+            value for value in answer_numbers
+            if value not in allowed_numbers and abs(float(value)) > 10
+        ]
+        if unsupported:
+            return "包含未由受控工具支持的数字 {}".format("、".join(unsupported[:3]))
+        return None
 
     @staticmethod
     def _apply_answer_contract(answer: str, context: dict[str, Any]) -> str:

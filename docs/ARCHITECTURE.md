@@ -2,7 +2,7 @@
 
 ## Boundary
 
-React is the primary product interface. Streamlit `app.py` remains as a legacy compatibility and internal comparison surface.
+React + FastAPI is the single product interface. Historical calculations are protected by domain tests, API contracts and report regressions instead of a second UI runtime.
 
 The public API, metric definitions, anomaly rules, evidence relationships, SQLite schema and report outputs are treated as stable contracts. Architecture changes must preserve those contracts unless a release explicitly says otherwise.
 

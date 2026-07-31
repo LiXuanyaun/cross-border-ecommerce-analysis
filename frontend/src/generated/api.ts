@@ -89,6 +89,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/business/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Business Datasets */
+        get: operations["business_datasets_api_v1_business_datasets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/business/{topic}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Business Topic */
+        get: operations["business_topic_api_v1_business__topic__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/datasets": {
         parameters: {
             query?: never;
@@ -123,6 +157,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/datasets/{dataset_id}/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dataset Capabilities */
+        get: operations["dataset_capabilities_api_v1_datasets__dataset_id__capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/datasets/{dataset_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive Dataset */
+        post: operations["archive_dataset_api_v1_datasets__dataset_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/adventureworks/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adventureworks Preview */
+        post: operations["adventureworks_preview_api_v1_imports_adventureworks_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/imports/adventureworks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adventureworks Import */
+        post: operations["adventureworks_import_api_v1_imports_adventureworks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/imports/preview": {
         parameters: {
             query?: never;
@@ -151,6 +253,91 @@ export interface paths {
         put?: never;
         /** Commit Import */
         post: operations["commit_import_api_v1_imports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/maintenance/unified-dataset/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Unified Dataset Preview */
+        get: operations["unified_dataset_preview_api_v1_maintenance_unified_dataset_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/maintenance/unified-dataset/lifecycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Unified Dataset Lifecycle */
+        get: operations["unified_dataset_lifecycle_api_v1_maintenance_unified_dataset_lifecycle_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/maintenance/unified-dataset/deactivate-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Deactivate Unified Sources */
+        post: operations["deactivate_unified_sources_api_v1_maintenance_unified_dataset_deactivate_sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/maintenance/unified-dataset/restore-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Unified Sources */
+        post: operations["restore_unified_sources_api_v1_maintenance_unified_dataset_restore_sources_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/maintenance/unified-dataset/purge-eligible": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Purge Eligible Unified Sources */
+        post: operations["purge_eligible_unified_sources_api_v1_maintenance_unified_dataset_purge_eligible_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -335,10 +522,7 @@ export interface components {
         AgentRunRequest: {
             /** Question */
             question: string;
-            /**
-             * Dataset Id
-             * @default demo-all
-             */
+            /** Dataset Id */
             dataset_id: string;
             /** Start */
             start?: string | null;
@@ -351,11 +535,47 @@ export interface components {
         };
         /** AgentSessionRequest */
         AgentSessionRequest: {
-            /**
-             * Dataset Id
-             * @default demo-all
-             */
+            /** Dataset Id */
             dataset_id: string;
+        };
+        /** ApiEnvelope[BusinessTopicData] */
+        ApiEnvelope_BusinessTopicData_: {
+            /**
+             * Status
+             * @default SUCCESS
+             * @enum {string}
+             */
+            status: "SUCCESS" | "PARTIAL" | "SKIPPED" | "FAILED" | "FATAL";
+            data: components["schemas"]["BusinessTopicData"];
+            meta?: components["schemas"]["ApiMeta"];
+            /** Limitations */
+            limitations?: string[];
+        };
+        /** ApiEnvelope[DatasetCapability] */
+        ApiEnvelope_DatasetCapability_: {
+            /**
+             * Status
+             * @default SUCCESS
+             * @enum {string}
+             */
+            status: "SUCCESS" | "PARTIAL" | "SKIPPED" | "FAILED" | "FATAL";
+            data: components["schemas"]["DatasetCapability"];
+            meta?: components["schemas"]["ApiMeta"];
+            /** Limitations */
+            limitations?: string[];
+        };
+        /** ApiEnvelope[TopicResponse] */
+        ApiEnvelope_TopicResponse_: {
+            /**
+             * Status
+             * @default SUCCESS
+             * @enum {string}
+             */
+            status: "SUCCESS" | "PARTIAL" | "SKIPPED" | "FAILED" | "FATAL";
+            data: components["schemas"]["TopicResponse"];
+            meta?: components["schemas"]["ApiMeta"];
+            /** Limitations */
+            limitations?: string[];
         };
         /** ApiEnvelope[dict[str, Any]] */
         ApiEnvelope_dict_str__Any__: {
@@ -369,6 +589,20 @@ export interface components {
             data: {
                 [key: string]: unknown;
             };
+            meta?: components["schemas"]["ApiMeta"];
+            /** Limitations */
+            limitations?: string[];
+        };
+        /** ApiEnvelope[list[BusinessDataset]] */
+        ApiEnvelope_list_BusinessDataset__: {
+            /**
+             * Status
+             * @default SUCCESS
+             * @enum {string}
+             */
+            status: "SUCCESS" | "PARTIAL" | "SKIPPED" | "FAILED" | "FATAL";
+            /** Data */
+            data: components["schemas"]["BusinessDataset"][];
             meta?: components["schemas"]["ApiMeta"];
             /** Limitations */
             limitations?: string[];
@@ -405,6 +639,25 @@ export interface components {
              */
             app_mode: string;
         };
+        /** AvailablePeriod */
+        AvailablePeriod: {
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+            /** Row Count */
+            row_count: number;
+        };
+        /** Body_adventureworks_import_api_v1_imports_adventureworks_post */
+        Body_adventureworks_import_api_v1_imports_adventureworks_post: {
+            /** Directory */
+            directory: string;
+        };
+        /** Body_adventureworks_preview_api_v1_imports_adventureworks_preview_post */
+        Body_adventureworks_preview_api_v1_imports_adventureworks_preview_post: {
+            /** Directory */
+            directory: string;
+        };
         /** Body_commit_import_api_v1_imports_post */
         Body_commit_import_api_v1_imports_post: {
             /** Files */
@@ -433,6 +686,8 @@ export interface components {
             target_currency: string;
             /** Selected Sheets Json */
             selected_sheets_json?: string | null;
+            /** Preview Id */
+            preview_id?: string | null;
         };
         /** Body_import_preview_api_v1_imports_preview_post */
         Body_import_preview_api_v1_imports_preview_post: {
@@ -441,10 +696,345 @@ export interface components {
             /** Selected Sheets Json */
             selected_sheets_json?: string | null;
         };
+        /** BusinessAnomaly */
+        BusinessAnomaly: {
+            /** Id */
+            id: string;
+            /** Rule Id */
+            rule_id: string;
+            /** Rule Version */
+            rule_version: string;
+            /** Title */
+            title: string;
+            /** Entity */
+            entity: string;
+            /** Status */
+            status: string;
+            /** Current Value */
+            current_value: number | null;
+            /** Comparison Value */
+            comparison_value: number | null;
+            /** Change Rate */
+            change_rate: number | null;
+            /** Threshold */
+            threshold: string;
+            /** Reason */
+            reason: string;
+            /** Recommendation */
+            recommendation: string;
+            /** Evidence Ids */
+            evidence_ids: string[];
+            /** Limitations */
+            limitations: string[];
+        };
+        /** BusinessDataset */
+        BusinessDataset: {
+            /** Dataset Id */
+            dataset_id: string;
+            /** Name */
+            name: string;
+            /** Imported At */
+            imported_at: string;
+            /** Is Simulated */
+            is_simulated: boolean;
+            /** Source Label */
+            source_label: string;
+        };
+        /** BusinessEvidence */
+        BusinessEvidence: {
+            /** Evidence Id */
+            evidence_id: string;
+            /** Metric Id */
+            metric_id: string;
+            /** Metric */
+            metric: string;
+            /** Value */
+            value: number | null;
+            /** Formula */
+            formula: string;
+            /** Source Table */
+            source_table: string;
+            /** Period */
+            period: {
+                [key: string]: string;
+            };
+            /** Comparison Period */
+            comparison_period?: {
+                [key: string]: string;
+            } | null;
+            /** Threshold */
+            threshold?: string | null;
+            /** Sample Size */
+            sample_size: number;
+            /** Record Keys */
+            record_keys: string[];
+            /** Limitations */
+            limitations: string[];
+        };
+        /** BusinessMetric */
+        BusinessMetric: {
+            /** Id */
+            id: string;
+            /** Label */
+            label: string;
+            /** Value */
+            value: number | null;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "currency" | "integer" | "percent" | "decimal" | "days";
+            /** Formula */
+            formula: string;
+            /** Currency */
+            currency?: string | null;
+            /** Evidence Id */
+            evidence_id: string;
+        };
+        /** BusinessTopicData */
+        BusinessTopicData: {
+            /**
+             * Topic
+             * @enum {string}
+             */
+            topic: "advertising" | "returns" | "logistics";
+            /** Dataset Id */
+            dataset_id: string;
+            /** Scope Id */
+            scope_id: string;
+            /** Period */
+            period: {
+                [key: string]: string;
+            };
+            /**
+             * Data State
+             * @enum {string}
+             */
+            data_state: "READY" | "EMPTY" | "OUT_OF_RANGE" | "INSUFFICIENT_DATA" | "INCOMPLETE_PERIOD" | "FAILED" | "FATAL";
+            /** Available Periods */
+            available_periods: {
+                [key: string]: string;
+            }[];
+            /** Recommended Period */
+            recommended_period: {
+                [key: string]: string;
+            };
+            /** Filters */
+            filters: {
+                [key: string]: unknown;
+            };
+            /** Filter Options */
+            filter_options: {
+                [key: string]: string[];
+            };
+            /** Data Source */
+            data_source: {
+                [key: string]: unknown;
+            };
+            /** Quality */
+            quality: {
+                [key: string]: unknown;
+            };
+            /** Metrics */
+            metrics: components["schemas"]["BusinessMetric"][];
+            /** Trend */
+            trend: {
+                [key: string]: unknown;
+            };
+            /** Ranking */
+            ranking: {
+                [key: string]: unknown;
+            };
+            /** Anomalies */
+            anomalies: components["schemas"]["BusinessAnomaly"][];
+            /** Causes */
+            causes: {
+                [key: string]: unknown;
+            }[];
+            /** Actions */
+            actions: {
+                [key: string]: unknown;
+            }[];
+            /** Evidence */
+            evidence: components["schemas"]["BusinessEvidence"][];
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            }[];
+            /** Pagination */
+            pagination?: {
+                [key: string]: number;
+            };
+            /** Distribution */
+            distribution?: {
+                [key: string]: unknown;
+            } | null;
+            /** Tracking Exceptions */
+            tracking_exceptions?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Visualizations */
+            visualizations?: components["schemas"]["VisualizationContract"][];
+            table?: components["schemas"]["TableContract"] | null;
+        };
+        /** DatasetCapability */
+        DatasetCapability: {
+            /** Dataset Id */
+            dataset_id: string;
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "1.0.0";
+            /** Facts */
+            facts: {
+                [key: string]: components["schemas"]["FactCapability"];
+            };
+        };
+        /** FactCapability */
+        FactCapability: {
+            /**
+             * Fact
+             * @enum {string}
+             */
+            fact: "orders" | "advertising" | "refunds" | "logistics";
+            /** Topics */
+            topics: string[];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "READY" | "EMPTY" | "OUT_OF_RANGE" | "INSUFFICIENT_DATA" | "INCOMPLETE_PERIOD" | "FAILED" | "FATAL";
+            /** Source Table */
+            source_table: string;
+            /** Date Field */
+            date_field: string;
+            /** Available Periods */
+            available_periods: components["schemas"]["AvailablePeriod"][];
+            /** Recommended Period */
+            recommended_period?: {
+                [key: string]: string;
+            } | null;
+            /** Requested Period */
+            requested_period?: {
+                [key: string]: string;
+            } | null;
+            /** Row Count */
+            row_count: number;
+            /** Missing Fields */
+            missing_fields: string[];
+            /** Quality State */
+            quality_state: string;
+            /**
+             * Simulation State
+             * @enum {string}
+             */
+            simulation_state: "ACTUAL" | "SIMULATED" | "MIXED";
+            /** Recommendation Policy */
+            recommendation_policy: string;
+            /** Limitations */
+            limitations: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** TableContract */
+        TableContract: {
+            /** Columns */
+            columns: components["schemas"]["VisualizationField"][];
+            /** Rows */
+            rows: {
+                [key: string]: unknown;
+            }[];
+            /** Pagination */
+            pagination: {
+                [key: string]: number;
+            };
+        };
+        /** TopicAiPayload */
+        TopicAiPayload: {
+            /** Findings */
+            findings: {
+                [key: string]: unknown;
+            }[];
+            /** Evidence */
+            evidence: components["schemas"]["TopicEvidenceContract"][];
+            /** Actions */
+            actions: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** TopicEvidenceContract */
+        TopicEvidenceContract: {
+            /**
+             * Contract Version
+             * @constant
+             */
+            contract_version: "topic-evidence.v1";
+            /** Id */
+            id: string;
+            /** Metric */
+            metric: string;
+            /** Value */
+            value?: number | null;
+            /**
+             * Unit
+             * @default
+             */
+            unit: string;
+            /** Claim */
+            claim: string;
+            /** Formula */
+            formula: string;
+            /** Sample Size */
+            sample_size?: number | null;
+            /** Confidence */
+            confidence: string;
+            /** Source Fields */
+            source_fields?: string[];
+            /** Period */
+            period: {
+                [key: string]: string;
+            };
+            /** Filters */
+            filters?: {
+                [key: string]: unknown;
+            };
+            /** Quality State */
+            quality_state: string;
+            /** Limitations */
+            limitations?: string[];
+        };
+        /** TopicResponse */
+        TopicResponse: {
+            /** Topic */
+            topic: string;
+            /** Summary */
+            summary: string;
+            ai: components["schemas"]["TopicAiPayload"];
+            /**
+             * Data State
+             * @default READY
+             * @enum {string}
+             */
+            data_state: "READY" | "EMPTY" | "OUT_OF_RANGE" | "INSUFFICIENT_DATA" | "INCOMPLETE_PERIOD" | "FAILED" | "FATAL";
+            /** Available Periods */
+            available_periods?: components["schemas"]["AvailablePeriod"][];
+            /** Recommended Period */
+            recommended_period?: {
+                [key: string]: string;
+            } | null;
+            /** Requested Period */
+            requested_period?: {
+                [key: string]: string;
+            } | null;
+            /** Visualizations */
+            visualizations?: components["schemas"]["VisualizationContract"][];
+            table?: components["schemas"]["TableContract"] | null;
+        } & {
+            [key: string]: unknown;
         };
         /** ValidationError */
         ValidationError: {
@@ -458,6 +1048,34 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /** VisualizationContract */
+        VisualizationContract: {
+            /** Id */
+            id: string;
+            /**
+             * Type
+             * @enum {string}
+             */
+            type: "line" | "bar" | "pie";
+            /** Title */
+            title: string;
+            dimension: components["schemas"]["VisualizationField"];
+            /** Series */
+            series: components["schemas"]["VisualizationField"][];
+            /** Rows */
+            rows: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** VisualizationField */
+        VisualizationField: {
+            /** Field */
+            field: string;
+            /** Label */
+            label: string;
+            /** Format */
+            format: string;
         };
         /** WorkItemPatch */
         WorkItemPatch: {
@@ -545,8 +1163,8 @@ export interface operations {
     };
     get_overview_api_v1_overview_get: {
         parameters: {
-            query?: {
-                dataset_id?: string;
+            query: {
+                dataset_id: string;
                 start?: string | null;
                 end?: string | null;
             };
@@ -578,8 +1196,8 @@ export interface operations {
     };
     get_topic_api_v1_topics__topic__get: {
         parameters: {
-            query?: {
-                dataset_id?: string;
+            query: {
+                dataset_id: string;
                 start?: string | null;
                 end?: string | null;
                 market?: string | null;
@@ -602,7 +1220,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
+                    "application/json": components["schemas"]["ApiEnvelope_TopicResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -618,8 +1236,8 @@ export interface operations {
     };
     export_topic_details_api_v1_topics__topic__export_get: {
         parameters: {
-            query?: {
-                dataset_id?: string;
+            query: {
+                dataset_id: string;
                 start?: string | null;
                 end?: string | null;
                 market?: string | null;
@@ -641,6 +1259,71 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    business_datasets_api_v1_business_datasets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_list_BusinessDataset__"];
+                };
+            };
+        };
+    };
+    business_topic_api_v1_business__topic__get: {
+        parameters: {
+            query: {
+                dataset_id: string;
+                start?: string | null;
+                end?: string | null;
+                country?: string | null;
+                channel?: string | null;
+                platform?: string | null;
+                campaign_id?: string | null;
+                category?: string | null;
+                return_reason?: string | null;
+                carrier_id?: string | null;
+                region?: string | null;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                topic: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_BusinessTopicData_"];
                 };
             };
             /** @description Validation Error */
@@ -692,6 +1375,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiEnvelope_dict_str__Any__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    dataset_capabilities_api_v1_datasets__dataset_id__capabilities_get: {
+        parameters: {
+            query?: {
+                fact?: string | null;
+                start?: string | null;
+                end?: string | null;
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiEnvelope_DatasetCapability_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_dataset_api_v1_datasets__dataset_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    adventureworks_preview_api_v1_imports_adventureworks_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_adventureworks_preview_api_v1_imports_adventureworks_preview_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    adventureworks_import_api_v1_imports_adventureworks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/x-www-form-urlencoded": components["schemas"]["Body_adventureworks_import_api_v1_imports_adventureworks_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -767,6 +1582,117 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unified_dataset_preview_api_v1_maintenance_unified_dataset_preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    unified_dataset_lifecycle_api_v1_maintenance_unified_dataset_lifecycle_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    deactivate_unified_sources_api_v1_maintenance_unified_dataset_deactivate_sources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    restore_unified_sources_api_v1_maintenance_unified_dataset_restore_sources_post: {
+        parameters: {
+            query: {
+                dataset_id: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purge_eligible_unified_sources_api_v1_maintenance_unified_dataset_purge_eligible_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -861,6 +1787,12 @@ export interface operations {
         parameters: {
             query?: {
                 keep_latest?: number;
+                ttl_days?: number | null;
+                compact?: boolean;
+                clear_topic_cache?: boolean;
+                max_entity_assessments?: number;
+                keep_low_sample_assessments?: boolean;
+                purge_duplicate_datasets?: boolean;
             };
             header?: never;
             path?: never;

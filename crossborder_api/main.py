@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 import os
 import time
 
@@ -15,7 +17,33 @@ from .routes import analytics, business, core, datasets, imports, maintenance, r
 from .telemetry import log_event
 
 
-app = FastAPI(title="CrossBorder AI Analytics API", version="4.0.0")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    if runtime.app_mode == "private":
+        started = time.perf_counter()
+        try:
+            unified = await asyncio.to_thread(runtime.ensure_unified_dataset)
+            log_event("startup_stage", stage="unified_dataset_ready", status="SUCCESS", dataset_id=unified["dataset_id"], duration_ms=round((time.perf_counter() - started) * 1000, 2))
+        except Exception as exc:
+            log_event("startup_stage", stage="unified_dataset_ready", status="FAILED", error=str(exc), repair="运行 python -m pytest tests/test_unified_dataset.py 后重启")
+            raise
+        started = time.perf_counter()
+        try:
+            await asyncio.to_thread(runtime.overview, unified["dataset_id"], None, None)
+            log_event("startup_stage", stage="unified_analysis_warmup", status="SUCCESS", dataset_id=unified["dataset_id"], duration_ms=round((time.perf_counter() - started) * 1000, 2))
+        except Exception as exc:
+            log_event("startup_stage", stage="unified_analysis_warmup", status="FAILED", error=str(exc), repair="运行 python -m pytest tests/test_api.py 后重启")
+            raise
+        started = time.perf_counter()
+        try:
+            await asyncio.to_thread(runtime.datasets)
+            log_event("startup_stage", stage="dataset_catalog_warmup", status="SUCCESS", duration_ms=round((time.perf_counter() - started) * 1000, 2))
+        except Exception as exc:
+            log_event("startup_stage", stage="dataset_catalog_warmup", status="FAILED", error=str(exc), repair="运行 python -m pytest tests/test_api.py 后重启")
+    yield
+
+
+app = FastAPI(title="CrossBorder AI Analytics API", version="4.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
