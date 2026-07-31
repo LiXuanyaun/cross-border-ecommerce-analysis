@@ -29,7 +29,7 @@ class EvidenceService:
         if query_name != "metric_facts_v1":
             raise EvidenceReplayError("Evidence query is not replayable by the installed catalog")
         path = Path(__file__).resolve().parent / "sql" / "{}.sql".format(query_name)
-        version = sha256(path.read_bytes()).hexdigest()
+        version = sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
         if version != payload["query_version"]:
             raise EvidenceReplayError("Installed SQL version does not match the evidence")
         database = CrossBorderDatabase(self.database_path)
