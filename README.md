@@ -23,6 +23,7 @@
   <img src="https://img.shields.io/badge/frontend-React%2018-149eca" alt="React 18" />
   <img src="https://img.shields.io/badge/backend-FastAPI-009688" alt="FastAPI" />
   <img src="https://img.shields.io/badge/storage-SQLite-003b57" alt="SQLite" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-5c5c5c" alt="PolyForm Noncommercial License 1.0.0" /></a>
 </p>
 
 > CrossBorder AI Analytics 不只是把数据画成图表，而是把“数据准备 → 指标计算 → 异常识别 → 经营诊断 → 建议与行动 → 报告复盘”连成一条可复算、可审计的分析链路。
@@ -242,6 +243,16 @@ python .\scripts\benchmark_sqlite.py
 - [多业务指标与异常规则](docs/MULTI_BUSINESS_METRICS_AND_RULES.md)：指标口径、异常和证据要求
 - [维护指南](docs/MAINTENANCE.md)：数据库、缓存和统一数据集维护
 - [项目上下文](docs/PROJECT_CONTEXT.md)：产品目标、重要决策和当前状态
+
+## 许可证
+
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)。
+
+- 允许个人学习、研究、实验、教育和业余项目等非商业用途。
+- 禁止任何商业用途，包括公司内部使用、产品化和付费服务。
+- 如需商业授权，请联系 [ceo666888111@gmail.com](mailto:ceo666888111@gmail.com)。
+
+该许可证限制商业使用，因此不属于 OSI 认可的开源许可证。完整条款以 [LICENSE](LICENSE) 文件为准。
 
 <p align="center">
   <sub>CrossBorder AI Analytics · 用证据把数据变成下一步行动</sub>

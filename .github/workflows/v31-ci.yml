@@ -38,6 +38,9 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Initialize unified demo dataset
+        run: python -c "from crossborder_api.app_state import runtime; print(runtime.ensure_unified_dataset())"
+
       - name: Python regression
         run: python -m pytest -q
 
