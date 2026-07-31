@@ -22,8 +22,11 @@ def _orders():
 
 def test_country_is_one_dataset_grain_and_partial_missing_is_labeled():
     frame = _orders()
-    assert resolve_market_field(frame) == "country"
-    assert market_series(frame).tolist() == ["US", "未标注国家", "US"]
+    assert resolve_market_field(frame) == "region"
+    assert market_series(frame).tolist() == ["North", "West", "South"]
+    country_preferred = frame.assign(region=["North", None, None])
+    assert resolve_market_field(country_preferred) == "country"
+    assert market_series(country_preferred).tolist() == ["US", "未标注国家", "US"]
     blank_country = frame.assign(country="  ")
     assert resolve_market_field(blank_country) == "region"
 
@@ -90,4 +93,3 @@ def test_product_category_conflict_and_parameterized_detail(tmp_path):
         "product_detail_summary", "product_detail_monthly",
         "product_detail_market", "product_detail_customers",
     }
-

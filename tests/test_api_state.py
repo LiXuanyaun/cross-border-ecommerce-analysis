@@ -181,6 +181,8 @@ def test_configured_provider_is_used_outside_private_mode():
 
     result = next(item for item in manager.runs[run_id] if item["type"] == "result")
     assert "模型按问题生成的答案" in result["payload"]["answer"]
+    assert result["payload"]["model"]["status"] == "USED"
+    assert any(item["type"] == "model" and item["payload"]["status"] == "USED" for item in manager.runs[run_id])
 
 
 def test_empty_provider_output_uses_partial_deterministic_fallback():
@@ -228,6 +230,7 @@ def test_empty_provider_output_uses_partial_deterministic_fallback():
     result = next(item for item in manager.runs[run_id] if item["type"] == "result")
     assert result["payload"]["status"] == "PARTIAL"
     assert "GMV 下降" in result["payload"]["answer"]
+    assert result["payload"]["model"]["status"] == "FALLBACK"
     assert any(item["type"] == "warning" for item in manager.runs[run_id])
 
 
@@ -268,4 +271,11 @@ def test_provider_hallucinated_number_uses_partial_deterministic_fallback():
     result = next(item for item in manager.runs[run_id] if item["type"] == "result")
     assert result["payload"]["status"] == "PARTIAL"
     assert "999999" not in result["payload"]["answer"]
+    assert result["payload"]["model"]["status"] == "FALLBACK"
     assert any("校验失败" in item["payload"].get("message", "") for item in manager.runs[run_id])
+
+
+def test_model_answer_accepts_equivalent_number_format():
+    context = {"metric": 808.5, "rate": 36.5}
+
+    assert AgentManager._model_answer_error("花费 808.50，增长 36.50%。", context) is None

@@ -13,7 +13,7 @@ def amount_column(frame: pd.DataFrame, field: str = "total_amount") -> str:
 
 
 def resolve_market_field(frame: pd.DataFrame) -> Optional[str]:
-    """Choose the geographic field with the best coverage in the active frame."""
+    """Choose the best-covered geographic grain, preferring country on ties."""
     coverage = {}
     for field in ("country", "region"):
         if field in frame:
@@ -22,13 +22,12 @@ def resolve_market_field(frame: pd.DataFrame) -> Optional[str]:
     available = {field: count for field, count in coverage.items() if count > 0}
     if not available:
         return None
-    # Prefer country only when its coverage is at least as good as region.
     return max(available, key=lambda field: (available[field], field == "country"))
 
 
-def market_series(frame: pd.DataFrame) -> pd.Series:
-    field = resolve_market_field(frame)
-    if field is None:
+def market_series(frame: pd.DataFrame, field: Optional[str] = None) -> pd.Series:
+    field = field or resolve_market_field(frame)
+    if field is None or field not in frame:
         return pd.Series(pd.NA, index=frame.index, dtype="string", name="market")
     missing_label = "未标注国家" if field == "country" else "未标注区域"
     return frame[field].astype("string").str.strip().replace("", pd.NA).fillna(missing_label).rename("market")

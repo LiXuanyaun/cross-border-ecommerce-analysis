@@ -32,7 +32,7 @@ SCENARIO_MATRIX = {
     "S17": ("中文字段和布尔值", "tests.test_analysis:test_chinese_fields_and_boolean_values_are_normalized"),
     "S18": ("100000行高基数", "tests.test_v31_scenario_matrix:test_s18_100k_complete_pipeline_under_15_seconds"),
     "S19": ("多文件同构合并", "tests.test_api:test_multi_file_order_import_commits_once_with_file_lineage"),
-    "S20": ("多文件字段不一致", "tests.test_api:test_multi_file_contract_failure_writes_no_partial_business_rows"),
+    "S20": ("多文件字段不一致", "tests.test_api:test_multi_file_field_drift_is_cleaned_into_one_dataset"),
 }
 
 

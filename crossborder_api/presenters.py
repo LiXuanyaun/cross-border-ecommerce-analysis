@@ -111,12 +111,18 @@ class OverviewPresenter(_RuntimeBackedPresenter):
                 "evidence_id": current.evidence_id if current else None,
             })
 
-        source["_market"] = market_series(source)
         market_current = source.loc[source.order_date.between(current_period["start"], current_period["end"])]
         yoy_start = (pd.Timestamp(current_period["start"]) - pd.DateOffset(years=1)).date().isoformat()
         yoy_end = (pd.Timestamp(current_period["end"]) - pd.DateOffset(years=1)).date().isoformat()
         market_previous = source.loc[source.order_date.between(yoy_start, yoy_end)]
-        market_field = resolve_market_field(market_current) or resolve_market_field(source)
+        market_field = (
+            bundle.metadata.get("market_dimension")
+            or resolve_market_field(market_current)
+            or resolve_market_field(source)
+        )
+        source["_market"] = market_series(source, market_field)
+        market_current = source.loc[source.order_date.between(current_period["start"], current_period["end"])]
+        market_previous = source.loc[source.order_date.between(yoy_start, yoy_end)]
         current_market_gmv = market_current.groupby("_market")[amount].sum() if market_field else pd.Series(dtype=float)
         previous_market_gmv = market_previous.groupby("_market")[amount].sum() if market_field else pd.Series(dtype=float)
         total_market_gmv = float(current_market_gmv.sum())

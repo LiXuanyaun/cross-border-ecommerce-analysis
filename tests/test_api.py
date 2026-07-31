@@ -166,6 +166,7 @@ def test_unified_overview_uses_active_market_dimension_and_quality_scope():
     data = payload["data"]
     assert len(data["markets"]) == 5
     assert data["markets"][0]["name"]
+    assert data["markets"][0]["name"] != "未标注国家"
     assert data["tasks"]
     assert data["insights"]
     assert payload["meta"]["quality_rating"] in {"A", "B"}

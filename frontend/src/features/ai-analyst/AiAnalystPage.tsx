@@ -47,8 +47,19 @@ interface ProviderStatus {
   message: string;
 }
 interface AgentEvent {
-  type: "stage" | "plan" | "tool" | "warning" | "result" | "error";
+  type: "stage" | "plan" | "tool" | "model" | "warning" | "result" | "error";
   payload: Record<string, unknown>;
+}
+interface ModelTrace {
+  status: string;
+  configured: boolean;
+  provider_name: string | null;
+  model: string | null;
+  source: string | null;
+  wire_api?: string | null;
+  message: string;
+  reason?: string;
+  elapsed_ms?: number;
 }
 interface AgentPlanStep {
   step_id: string;
@@ -85,6 +96,7 @@ interface AnalysisResult {
     decision_brief: DecisionBrief;
   };
   scope_id: string;
+  model?: ModelTrace;
 }
 
 const initialAssistant =
@@ -377,6 +389,8 @@ function AnalysisProgress({ events }: { events: AgentEvent[] }) {
       .map((item) => [String(item.payload.stage), String(item.payload.status)]),
   );
   const tools = events.filter((item) => item.type === "tool");
+  const modelEvent = [...events].reverse().find((item) => item.type === "model");
+  const modelTrace = modelEvent?.payload as Partial<ModelTrace> | undefined;
   const planEvent = [...events].reverse().find((item) => item.type === "plan");
   const planSteps = Array.isArray(planEvent?.payload.steps)
     ? (planEvent?.payload.steps as AgentPlanStep[])
@@ -444,6 +458,46 @@ function AnalysisProgress({ events }: { events: AgentEvent[] }) {
           </div>
         </div>
       )}
+      {modelTrace && (
+        <ModelTraceCard trace={modelTrace} />
+      )}
+    </div>
+  );
+}
+
+function modelStatusLabel(status?: string) {
+  switch ((status ?? "").toUpperCase()) {
+    case "RUNNING": return "调用中";
+    case "USED": return "模型已采用";
+    case "FALLBACK": return "已回退确定性分析";
+    case "NOT_CONFIGURED": return "未配置真实模型";
+    default: return status || "未知";
+  }
+}
+
+function modelStatusTone(status?: string): BadgeTone {
+  switch ((status ?? "").toUpperCase()) {
+    case "USED": return "green";
+    case "FALLBACK": return "orange";
+    case "NOT_CONFIGURED": return "blue";
+    default: return "neutral";
+  }
+}
+
+function ModelTraceCard({ trace }: { trace: Partial<ModelTrace> }) {
+  return (
+    <div className="border-t border-line pt-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+        <span className="font-semibold">真实模型复核</span>
+        <Badge tone={modelStatusTone(trace.status)}>{modelStatusLabel(trace.status)}</Badge>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-muted">
+        {trace.provider_name && trace.model
+          ? `${trace.provider_name} · ${trace.model}${trace.wire_api ? ` · ${trace.wire_api}` : ""}`
+          : "本轮没有可用的真实模型配置"}
+        {typeof trace.elapsed_ms === "number" ? ` · ${trace.elapsed_ms} ms` : ""}
+      </p>
+      {trace.message && <p className="mt-1 text-xs leading-5 text-muted">{trace.message}</p>}
     </div>
   );
 }
@@ -516,7 +570,7 @@ function AnalysisResultPanel({
       <div className="flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-line px-4">
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold">分析结果</h2>
-          <Badge tone="green">分析完成</Badge>
+          <Badge tone={statusTone(result!.status)}>{statusLabel(result!.status)}</Badge>
         </div>
         <div className="flex gap-2">
           <a href={`/api/v1/reports/${datasetId}/docx${reportQuery}`}>
@@ -698,6 +752,11 @@ function AnswerPanel({
           <h3 className="text-sm font-semibold">本轮回答</h3>
           <div className="flex flex-wrap gap-2">
             <Badge tone={statusTone(result.status)}>{statusLabel(result.status)}</Badge>
+            {result.model && (
+              <Badge tone={modelStatusTone(result.model.status)}>
+                {modelStatusLabel(result.model.status)}
+              </Badge>
+            )}
             <Badge tone="blue">{observations.length} 个工具</Badge>
             <Badge tone={evidenceCount > 0 ? "green" : "neutral"}>
               {evidenceCount} 条证据
@@ -707,6 +766,7 @@ function AnswerPanel({
         <p className="mt-2 text-xs leading-5 text-muted">
           问题：{result.analysis.question}
         </p>
+        {result.model && <ModelTraceCard trace={result.model} />}
       </div>
       <div className="scrollbar-thin max-h-[320px] overflow-y-auto px-4 py-3">
         <p className="whitespace-pre-wrap break-words text-sm leading-7 text-[#344054]">

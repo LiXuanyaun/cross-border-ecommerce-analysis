@@ -12,6 +12,7 @@ import sqlite3
 import tomllib
 import uuid
 import time
+from decimal import Decimal, InvalidOperation
 
 import httpx
 
@@ -149,6 +150,20 @@ class AgentManager:
         self._session_deadlines: dict[str, float] = {}
         self._demo_ttl_seconds = max(60, int(os.getenv("CROSSBORDER_DEMO_SESSION_TTL", "3600")))
 
+    def _model_trace(self, status: str, message: str, **extra: Any) -> dict[str, Any]:
+        config = self.provider.config
+        payload: dict[str, Any] = {
+            "status": status,
+            "configured": config is not None,
+            "provider_name": config.provider_name if config else None,
+            "model": config.model if config else None,
+            "source": config.source if config else None,
+            "wire_api": config.wire_api if config else None,
+            "message": message,
+        }
+        payload.update(extra)
+        return payload
+
     def _cleanup_expired(self) -> None:
         if self.runtime.app_mode != "demo":
             return
@@ -208,6 +223,10 @@ class AgentManager:
         market: str | None = None, category: str | None = None,
     ) -> None:
         run_status = "SUCCESS"
+        model_trace = self._model_trace(
+            "NOT_CONFIGURED",
+            "未配置真实模型，本轮使用确定性分析。",
+        )
         try:
             self._emit(run_id, "stage", {"stage": "理解问题", "status": "completed"})
             context, bundle = await asyncio.to_thread(
@@ -223,9 +242,15 @@ class AgentManager:
                 await asyncio.sleep(0.05)
             self._emit(run_id, "stage", {"stage": "原因分析", "status": "completed"})
             if context.get("decision_brief", {}).get("status") != "SUCCESS":
-                run_status = "SKIPPED"
+                run_status = "PARTIAL" if self.provider.config else "SKIPPED"
             answer = self._deterministic_answer(context)
             if self.provider.config:
+                model_started = time.perf_counter()
+                model_trace = self._model_trace(
+                    "RUNNING",
+                    "正在调用真实模型进行回答复核。",
+                )
+                self._emit(run_id, "model", model_trace)
                 model_context = {
                     "question": context.get("question"),
                     "conversation": context.get("conversation"),
@@ -241,6 +266,7 @@ class AgentManager:
                 prompt = (
                     "你是跨境电商经营分析师。只能根据以下受控工具结果回答，不得补充未经证据支持的因果。"
                     "不得输出内部ID、UUID、查询名或不存在的广告、库存指标。"
+                    "所有数字必须直接复制工具结果，不得重新计算、四舍五入或补充新数字。"
                     "预期收益没有因果或实验依据时必须写明当前数据不足。"
                     "回答正文只解释结构化关键发现、驱动和行动。\n问题：{}\n工具结果：{}"
                 ).format(question, json.dumps(model_context, ensure_ascii=False)[:30000])
@@ -250,15 +276,62 @@ class AgentManager:
                         validation_error = self._model_answer_error(generated, model_context)
                         if validation_error:
                             run_status = "PARTIAL"
-                            self._emit(run_id, "warning", {"message": f"模型输出校验失败，已返回确定性分析：{validation_error}"})
+                            model_trace = self._model_trace(
+                                "FALLBACK",
+                                f"模型输出校验失败，未通过证据校验，已回退确定性分析：{validation_error}",
+                                reason=validation_error,
+                                elapsed_ms=round((time.perf_counter() - model_started) * 1000, 2),
+                            )
+                            self._emit(run_id, "model", model_trace)
+                            self._emit(run_id, "warning", {"message": model_trace["message"]})
                         else:
                             answer = generated.strip()
+                            model_trace = self._model_trace(
+                                "USED",
+                                "真实模型回答已通过证据校验并被采用。",
+                                elapsed_ms=round((time.perf_counter() - model_started) * 1000, 2),
+                            )
+                            self._emit(run_id, "model", model_trace)
                     else:
                         run_status = "PARTIAL"
-                        self._emit(run_id, "warning", {"message": "模型输出为空，已返回确定性分析"})
+                        model_trace = self._model_trace(
+                            "FALLBACK",
+                            "模型输出为空，已回退确定性分析。",
+                            reason="EMPTY_RESPONSE",
+                            elapsed_ms=round((time.perf_counter() - model_started) * 1000, 2),
+                        )
+                        self._emit(run_id, "model", model_trace)
+                        self._emit(run_id, "warning", {"message": model_trace["message"]})
                 except Exception as exc:
                     run_status = "PARTIAL"
-                    self._emit(run_id, "warning", {"message": f"模型调用失败，已返回确定性分析：{type(exc).__name__}"})
+                    detail = " ".join(str(exc).split())[:240]
+                    if isinstance(exc, httpx.RemoteProtocolError):
+                        failure_message = (
+                            "模型网关在返回完整响应前断开连接。"
+                            "已回退确定性分析。"
+                            f"{detail or '可能是 Responses 接口不兼容、上游超时或代理中断。'}"
+                        )
+                    elif isinstance(exc, httpx.TimeoutException):
+                        failure_message = (
+                            "模型网关响应超时，已回退确定性分析。"
+                            f"{detail or '请检查上游服务状态或网络代理。'}"
+                        )
+                    else:
+                        failure_message = (
+                            f"模型调用失败（{type(exc).__name__}），已回退确定性分析。"
+                            f"{detail or '上游未返回更多错误详情。'}"
+                        )
+                    model_trace = self._model_trace(
+                        "FALLBACK",
+                        failure_message,
+                        reason=type(exc).__name__,
+                        error_detail=detail or None,
+                        elapsed_ms=round((time.perf_counter() - model_started) * 1000, 2),
+                    )
+                    self._emit(run_id, "model", model_trace)
+                    self._emit(run_id, "warning", {"message": model_trace["message"]})
+            else:
+                self._emit(run_id, "model", model_trace)
             answer = self._apply_answer_contract(answer, context)
             self._emit(run_id, "stage", {"stage": "生成建议", "status": "completed"})
             self._emit(run_id, "result", {
@@ -267,6 +340,7 @@ class AgentManager:
                 "analysis": context,
                 "scope_id": bundle.metadata.get("scope_id"),
                 "trace": context.get("trace"),
+                "model": model_trace,
             })
             new_messages = [
                 {"role": "user", "content": question},
@@ -307,11 +381,25 @@ class AgentManager:
         if not text:
             return "输出为空"
         controlled = json.dumps(context, ensure_ascii=False, default=str)
-        allowed_numbers = set(re.findall(r"-?\d+(?:\.\d+)?", controlled))
-        answer_numbers = re.findall(r"-?\d+(?:\.\d+)?", text)
+        number_pattern = r"(?<![\w.])-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+
+        def numeric_values(value: str) -> list[Decimal]:
+            numbers: list[Decimal] = []
+            for token in re.findall(number_pattern, value):
+                try:
+                    numbers.append(Decimal(token.replace(",", "")))
+                except InvalidOperation:
+                    continue
+            return numbers
+
+        allowed_numbers = set(numeric_values(controlled))
+        answer_tokens = re.findall(number_pattern, text)
         unsupported = [
-            value for value in answer_numbers
-            if value not in allowed_numbers and abs(float(value)) > 10
+            token
+            for token in answer_tokens
+            if (parsed := next(iter(numeric_values(token)), None)) is not None
+            and parsed not in allowed_numbers
+            and abs(parsed) > Decimal("10")
         ]
         if unsupported:
             return "包含未由受控工具支持的数字 {}".format("、".join(unsupported[:3]))

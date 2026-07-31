@@ -204,7 +204,7 @@ class AnalysisService:
             try:
                 database = CrossBorderDatabase(self.database_path)
                 stored = database.persist(context)
-                market_field = resolve_market_field(context.analysis_data) or "region"
+                market_field = resolve_market_field(run_context.analysis_data) or "region"
                 repository = SQLAnalysisRepository(
                     database, stored, filters=active_filters, market_field=market_field
                 )
