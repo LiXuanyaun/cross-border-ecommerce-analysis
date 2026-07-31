@@ -69,6 +69,9 @@ class DatasetService:
                     self._demo_context.metadata["dataset_id"] = (
                         "766834d43707fb3152aafa735314fc483d64a21977a4b0ae132bf89192550ed9"
                     )
+                    self._demo_context.metadata["scope_dataset_id"] = (
+                        "766834d43707fb3152aafa735314fc483d64a21977a4b0ae132bf89192550ed9"
+                    )
         return self._demo_context
 
     def database(self) -> CrossBorderDatabase:

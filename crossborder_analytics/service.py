@@ -234,7 +234,12 @@ class AnalysisService:
         phase2_future = None
         phase2_executor = None
         phase2_quality = None
-        phase2_dataset_id = str(run_context.metadata.get("dataset_id") or context.metadata.get("sha256") or "unpersisted")
+        phase2_dataset_id = str(
+            run_context.metadata.get("scope_dataset_id")
+            or run_context.metadata.get("dataset_id")
+            or context.metadata.get("sha256")
+            or "unpersisted"
+        )
         phase2_scope_id = build_scope_id(
             phase2_dataset_id, request, context.metadata.get("target_currency") or ""
         )
