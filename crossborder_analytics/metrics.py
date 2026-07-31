@@ -24,6 +24,11 @@ SQL_PATH = Path(__file__).resolve().parent / "sql" / "metric_facts_v1.sql"
 MAX_LIFECYCLE_ASSESSMENTS = 1_000
 
 
+def _metric_query_hash() -> str:
+    """Hash SQL semantics consistently across Windows and POSIX checkouts."""
+    return sha256(SQL_PATH.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 def build_scope_id(dataset_id: str, request: AnalysisRequest, currency: str) -> str:
     request_payload = request.to_dict()
     request_payload.pop("analysis_mode", None)
@@ -32,7 +37,7 @@ def build_scope_id(dataset_id: str, request: AnalysisRequest, currency: str) -> 
         "metrics": {item.metric_id: item.version for item in METRICS_CATALOG},
         "rules": {item.rule_id: item.version for item in ANOMALY_RULES},
         "recommendations": {item.recommendation_rule_id: item.version for item in RECOMMENDATION_RULES},
-        "metric_query": sha256(SQL_PATH.read_bytes()).hexdigest(),
+        "metric_query": _metric_query_hash(),
     }
     return stable_id("scope", dataset_id, request_payload, currency, versions)
 
@@ -107,7 +112,7 @@ class MetricsEngine:
         started = time.perf_counter()
         if self.repository:
             facts = self.repository.query("metric_facts_v1")
-            query_version = sha256(SQL_PATH.read_bytes()).hexdigest()
+            query_version = _metric_query_hash()
             query_name = "metric_facts_v1"
         else:
             facts = _pandas_facts(context.analysis_data)
