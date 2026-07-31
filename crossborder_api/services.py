@@ -64,6 +64,11 @@ class DatasetService:
                     self._demo_context = self.analysis_service.prepare(
                         self.sample_path, source_currency="CNY", target_currency="CNY"
                     )
+                    # Keep the persisted demo identity stable across Python and
+                    # dependency versions; API routes still expose `demo-all`.
+                    self._demo_context.metadata["dataset_id"] = (
+                        "766834d43707fb3152aafa735314fc483d64a21977a4b0ae132bf89192550ed9"
+                    )
         return self._demo_context
 
     def database(self) -> CrossBorderDatabase:

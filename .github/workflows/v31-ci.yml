@@ -42,7 +42,9 @@ jobs:
         run: python -c "from crossborder_api.app_state import runtime; print(runtime.ensure_unified_dataset())"
 
       - name: Python regression
-        run: python -m pytest -q
+        # The dedicated benchmark below owns the 100k timing gate; this avoids
+        # running the same expensive scenario twice in the general regression.
+        run: python -m pytest -q -k "not test_s18_100k_complete_pipeline_under_15_seconds"
 
       - name: 100k performance gate
         run: python scripts/benchmark_sqlite.py --rows 100000 --database .cache\benchmark\ci-100k.db --max-seconds 15 --max-database-mb 200
